@@ -1,1 +1,4 @@
 tests/ export-ignore
+docs/ export-ignore
+service/ export-ignore
+service/panel.html -text whitespace=cr-at-eol

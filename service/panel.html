@@ -1,0 +1,3261 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Bot 管理器</title>
+  <style>
+    :root {
+      --bg: #f3f5f4;
+      --surface: #ffffff;
+      --surface-subtle: #f7f9f8;
+      --ink: #17211d;
+      --muted: #61706a;
+      --line: #d9dfdc;
+      --line-strong: #bdc8c3;
+      --accent: #087e6a;
+      --accent-strong: #056454;
+      --accent-soft: #e4f3ef;
+      --good: #147a43;
+      --good-soft: #e4f4ea;
+      --warn: #9a6508;
+      --warn-soft: #fff1d5;
+      --bad: #ad3737;
+      --bad-soft: #fbe9e9;
+      --focus: #006edb;
+      --sidebar: 224px;
+      --shadow: 0 10px 28px rgba(25, 45, 37, .08);
+      font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body { margin: 0; font-size: 14px; line-height: 1.5; }
+    body[data-view="logs"] { height: 100dvh; overflow: hidden; }
+    button, select, input { font: inherit; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--focus) 35%, transparent);
+      outline-offset: 2px;
+    }
+
+    .skip-link {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      z-index: 1000;
+      padding: 9px 12px;
+      color: white;
+      background: var(--ink);
+      transform: translateY(-150%);
+    }
+    .skip-link:focus { transform: translateY(0); }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: var(--sidebar) minmax(0, 1fr);
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 22px 14px 16px;
+      color: #eaf1ee;
+      background: #1b2924;
+      border-right: 1px solid #263a32;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      min-height: 44px;
+      padding: 0 10px 20px;
+      border-bottom: 1px solid #35443e;
+    }
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      border-radius: 7px;
+      color: #102019;
+      background: #65d1b7;
+      font-weight: 800;
+      font-size: 13px;
+    }
+    .brand strong { display: block; font-size: 15px; letter-spacing: 0; }
+    .brand small { color: #aab8b2; font-size: 11px; }
+
+    .nav {
+      display: grid;
+      gap: 4px;
+      padding-top: 18px;
+    }
+    .nav button {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 11px;
+      border: 0;
+      border-radius: 6px;
+      color: #b9c5c0;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+    }
+    .nav button:hover { color: #fff; background: #263a32; }
+    .nav button[aria-selected="true"] {
+      color: #fff;
+      background: #315045;
+      box-shadow: inset 3px 0 #65d1b7;
+    }
+    .nav-icon {
+      width: 22px;
+      text-align: center;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .connection {
+      margin-top: auto;
+      padding: 14px 10px 2px;
+      border-top: 1px solid #35443e;
+    }
+    .connection p { margin: 0; color: #aab8b2; font-size: 12px; }
+    .connection strong { display: block; margin-top: 4px; color: #eef5f2; font-size: 12px; }
+
+    .main { min-width: 0; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 10px 26px;
+      background: rgba(255, 255, 255, .94);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(8px);
+    }
+    .page-heading { min-width: 0; }
+    .page-heading h1 {
+      margin: 0;
+      font-size: 19px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    .page-heading p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .top-actions { display: flex; align-items: center; gap: 10px; }
+
+    .button {
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 8px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      color: var(--ink);
+      background: var(--surface);
+      text-decoration: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .button:hover { border-color: #91a29b; background: var(--surface-subtle); }
+    .button:active { transform: translateY(1px); }
+    .button.primary { color: #fff; border-color: var(--accent); background: var(--accent); }
+    .button.primary:hover { border-color: var(--accent-strong); background: var(--accent-strong); }
+    .button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+    .button.icon-only { width: 40px; padding: 8px; font-size: 18px; }
+
+    .status-pill {
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--surface-subtle);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: #909b96;
+    }
+    .status-pill.online { color: var(--good); border-color: #b9dcc6; background: var(--good-soft); }
+    .status-pill.online .status-dot { background: var(--good); }
+    .status-pill.error { color: var(--bad); border-color: #eccaca; background: var(--bad-soft); }
+    .status-pill.error .status-dot { background: var(--bad); }
+    .status-pill.warn { color: var(--warn); border-color: #ead6aa; background: var(--warn-soft); }
+    .status-pill.warn .status-dot { background: var(--warn); }
+
+    .content {
+      width: min(1440px, 100%);
+      margin: 0 auto;
+      padding: 24px 26px 40px;
+    }
+    .view[hidden] { display: none; }
+    .section { margin-bottom: 26px; }
+    .section-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+    .section-heading h2 { margin: 0; font-size: 15px; letter-spacing: 0; }
+    .section-heading p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+    .section-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+    .service-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .service-card {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      box-shadow: 0 2px 8px rgba(25, 45, 37, .035);
+    }
+    .service-card header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .service-name { display: flex; gap: 10px; min-width: 0; }
+    .service-glyph {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      border-radius: 6px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-weight: 800;
+      font-size: 12px;
+    }
+    .service-card h3 { margin: 0; font-size: 14px; }
+    .service-card .meta { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+    .service-card .actions { display: flex; gap: 8px; margin-top: 15px; }
+    .service-card .actions .button { flex: 1; min-width: 0; }
+
+    .overview-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(300px, .85fr);
+      gap: 18px;
+    }
+    .panel {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+    }
+    .panel-title {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 15px;
+      border-bottom: 1px solid var(--line);
+    }
+    .panel-title h2 { margin: 0; font-size: 14px; }
+    .panel-title span { color: var(--muted); font-size: 11px; }
+
+    .metric-list { padding: 5px 15px 12px; }
+    .metric-row {
+      display: grid;
+      grid-template-columns: 90px minmax(0, 1fr) 48px;
+      align-items: center;
+      gap: 12px;
+      min-height: 46px;
+      border-bottom: 1px solid #edf0ee;
+    }
+    .metric-row:last-child { border-bottom: 0; }
+    .metric-row label { color: var(--muted); font-size: 12px; }
+    .track { height: 7px; overflow: hidden; border-radius: 999px; background: #e9eeeb; }
+    .track span {
+      display: block;
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width .35s ease;
+    }
+    .metric-value { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 700; }
+
+    .facts { display: grid; grid-template-columns: 1fr 1fr; }
+    .fact {
+      min-height: 74px;
+      padding: 12px 15px;
+      border-right: 1px solid #edf0ee;
+      border-bottom: 1px solid #edf0ee;
+    }
+    .fact:nth-child(2n) { border-right: 0; }
+    .fact:nth-last-child(-n+2) { border-bottom: 0; }
+    .fact span { display: block; color: var(--muted); font-size: 11px; }
+    .fact strong {
+      display: block;
+      margin-top: 5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    .trend-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .segmented {
+      display: inline-grid;
+      grid-template-columns: repeat(2, minmax(72px, 1fr));
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #edf1ef;
+    }
+    .segmented button {
+      min-height: 32px;
+      padding: 5px 10px;
+      border: 0;
+      border-radius: 4px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .segmented button[aria-pressed="true"] {
+      color: var(--ink);
+      background: var(--surface);
+      box-shadow: 0 1px 3px rgba(25, 45, 37, .12);
+    }
+    .chart-area { padding: 14px 15px 12px; }
+    .chart-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 18px;
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .legend-line { width: 18px; height: 3px; border-radius: 999px; }
+    .chart-wrap {
+      position: relative;
+      width: 100%;
+      height: 286px;
+      overflow: hidden;
+    }
+    .chart-wrap canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .chart-summary {
+      min-height: 34px;
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .balance-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .balance-card {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+    }
+    .balance-card header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .balance-card h3 { margin: 0; font-size: 14px; }
+    .balance-card .provider-meta { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+    .balance-main {
+      min-height: 54px;
+      margin-top: 16px;
+      font-size: 25px;
+      line-height: 1.2;
+      font-weight: 750;
+      font-variant-numeric: tabular-nums;
+    }
+    .balance-main small { margin-left: 5px; color: var(--muted); font-size: 12px; font-weight: 600; }
+    .balance-details {
+      min-height: 22px;
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+
+    dialog {
+      width: min(760px, calc(100vw - 28px));
+      max-height: min(820px, calc(100vh - 28px));
+      padding: 0;
+      overflow: hidden;
+      color: var(--ink);
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: 0 24px 70px rgba(18, 34, 28, .24);
+    }
+    dialog::backdrop { background: rgba(16, 28, 23, .52); }
+    .dialog-shell {
+      height: min(820px, calc(100vh - 28px));
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+    }
+    .dialog-header, .dialog-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px 18px;
+      background: var(--surface);
+    }
+    .dialog-header { border-bottom: 1px solid var(--line); }
+    .dialog-footer { border-top: 1px solid var(--line); }
+    .dialog-header h2 { margin: 0; font-size: 17px; }
+    .dialog-header p { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+    .dialog-body { overflow: auto; padding: 4px 18px 20px; }
+    .form-section { padding: 16px 0; border-bottom: 1px solid var(--line); }
+    .form-section:last-child { border-bottom: 0; }
+    .form-section-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .form-section-heading h3 { margin: 0; font-size: 14px; }
+    .form-section-heading p { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .field { min-width: 0; }
+    .field.full { grid-column: 1 / -1; }
+    .form-hint { grid-column: 1 / -1; margin: 2px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .field label { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 650; }
+    .field input, .field select {
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 10px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      color: var(--ink);
+      background: var(--surface);
+    }
+    .field input:focus, .field select:focus { border-color: var(--focus); }
+    .field small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+    .secret-input-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 7px;
+    }
+    .secret-input-row .button { min-width: 62px; }
+    .inline-check {
+      min-height: 40px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .inline-check input { width: 17px; height: 17px; accent-color: var(--accent); }
+    .custom-provider-list { display: grid; gap: 10px; }
+    .custom-provider-form {
+      min-width: 0;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-subtle);
+    }
+    .custom-provider-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .custom-provider-title strong { font-size: 12px; }
+    .danger-link {
+      min-height: 34px;
+      padding: 5px 9px;
+      color: var(--bad);
+      border: 1px solid #e1baba;
+      border-radius: 6px;
+      background: var(--surface);
+      cursor: pointer;
+      font-weight: 650;
+    }
+    .form-message { min-height: 20px; margin: 0; color: var(--muted); font-size: 12px; }
+    .form-message.error { color: var(--bad); }
+    .form-message.success { color: var(--good); }
+
+    .upstream-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 14px;
+      background: var(--surface, #fff);
+    }
+    .upstream-card[data-enabled="false"] { opacity: .72; }
+    .upstream-card header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .upstream-card header h3 { margin: 0; font-size: 14px; flex: 1; }
+    .upstream-card .upstream-badge {
+      font-size: 11px;
+      padding: 2px 9px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+      font-weight: 600;
+    }
+    .upstream-card .upstream-badge.off {
+      background: var(--muted);
+      color: #fff;
+    }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      height: 46px;
+      padding: 8px 14px;
+      border-bottom: 1px solid #edf0ee;
+      text-align: left;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+    th { color: var(--muted); background: var(--surface-subtle); font-weight: 600; }
+    tr:last-child td { border-bottom: 0; }
+    .state-text { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+    .state-text::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #919b97;
+    }
+    .state-text.running { color: var(--good); }
+    .state-text.running::before { background: var(--good); }
+
+    .empty {
+      min-height: 116px;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .usage-toolbar {
+      display: flex;
+      align-items: end;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .filter-field { min-width: 150px; }
+    .filter-field label {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+    }
+    .filter-field select {
+      width: 100%;
+      min-height: 38px;
+      padding: 7px 28px 7px 9px;
+      color: var(--ink);
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+    .usage-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    .usage-stat {
+      min-width: 0;
+      padding: 15px;
+      border-right: 1px solid var(--line);
+    }
+    .usage-stat:last-child { border-right: 0; }
+    .usage-stat span { display: block; color: var(--muted); font-size: 11px; }
+    .usage-stat strong {
+      display: block;
+      margin-top: 5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 20px;
+      font-variant-numeric: tabular-nums;
+    }
+    .usage-stat small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .usage-note {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+    .numeric { text-align: right; font-variant-numeric: tabular-nums; }
+    .table-status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--surface-subtle);
+      font-size: 10px;
+      font-weight: 650;
+    }
+    .table-status.good { color: var(--good); border-color: #b9dcc6; background: var(--good-soft); }
+    .table-status.bad { color: var(--bad); border-color: #eccaca; background: var(--bad-soft); }
+    .table-status.warn { color: var(--warn); border-color: #ead6aa; background: var(--warn-soft); }
+    .route-cell {
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .usage-view-switch {
+      grid-template-columns: repeat(3, minmax(58px, 1fr));
+    }
+    .metrics-ranges {
+      grid-template-columns: repeat(5, minmax(54px, 1fr));
+    }
+    .usage-chart-wrap {
+      height: 340px;
+      padding: 16px;
+      position: relative;
+    }
+    .usage-chart-wrap[hidden], .table-wrap[hidden] { display: none; }
+    .chart-tooltip {
+      position: absolute;
+      z-index: 6;
+      min-width: 176px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(16, 24, 22, 0.94);
+      color: #f2f6f4;
+      font-size: 12px;
+      line-height: 1.7;
+      box-shadow: 0 10px 26px rgba(0, 0, 0, 0.3);
+      pointer-events: none;
+      transform: translate(-50%, -100%);
+      white-space: nowrap;
+    }
+    .chart-tooltip[hidden] { display: none; }
+    .chart-tooltip strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+      letter-spacing: 0.05em;
+      color: #9fe3d2;
+    }
+    .chart-tooltip span {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+    }
+    .chart-tooltip b {
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .usage-chart-wrap canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .pagination {
+      min-height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      padding: 8px 14px;
+      border-top: 1px solid var(--line);
+    }
+    .pagination span {
+      min-width: 112px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+    .price-entry {
+      padding: 14px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .price-entry:last-child { border-bottom: 0; }
+    .price-entry-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .price-entry-header strong { font-size: 12px; }
+
+    .tool-frame {
+      min-height: 360px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .tool-bar {
+      min-height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 8px 12px 8px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-subtle);
+    }
+    .tool-bar strong { display: block; font-size: 13px; }
+    .tool-bar span { display: block; color: var(--muted); font-size: 11px; }
+    .launch-panel {
+      min-height: 306px;
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      gap: 14px;
+      padding: 32px;
+      text-align: center;
+    }
+    .launch-panel h2 { margin: 0; font-size: 18px; }
+    .launch-panel p { max-width: 600px; margin: 0; color: var(--muted); }
+    .credential-note {
+      width: min(600px, 100%);
+      padding: 12px 14px;
+      border: 1px solid #ead6aa;
+      border-radius: 6px;
+      color: #704b08;
+      background: var(--warn-soft);
+      text-align: left;
+    }
+    .credential-note strong { display: block; margin-bottom: 3px; color: #593b06; }
+    .credential-note code { color: inherit; font-family: Consolas, "Cascadia Mono", monospace; }
+
+    .log-layout {
+      height: calc(100dvh - 132px);
+      min-height: 520px;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      overflow: hidden;
+      border: 1px solid #26342f;
+      border-radius: 7px;
+      background: #111a17;
+      box-shadow: var(--shadow);
+    }
+    .log-toolbar {
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 9px 12px;
+      color: #eaf1ee;
+      border-bottom: 1px solid #33413c;
+      background: #1a2622;
+    }
+    .log-controls { display: flex; align-items: center; gap: 8px; }
+    .log-toolbar select {
+      min-width: 150px;
+      min-height: 38px;
+      padding: 7px 30px 7px 10px;
+      color: #eaf1ee;
+      border: 1px solid #4a5b54;
+      border-radius: 6px;
+      background: #26342f;
+    }
+    .log-toolbar .button { color: #eaf1ee; border-color: #4a5b54; background: #26342f; }
+    .log-toolbar .segmented {
+      grid-template-columns: repeat(2, minmax(60px, 1fr));
+      border-color: #4a5b54;
+      background: #111a17;
+    }
+    .log-toolbar .segmented button { color: #aebcb6; }
+    .log-toolbar .segmented button[aria-pressed="true"] {
+      color: #10211b;
+      background: #9de2d1;
+      box-shadow: none;
+    }
+    .log-filterbar {
+      display: flex;
+      align-items: end;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 9px 12px;
+      color: #d8e3df;
+      border-bottom: 1px solid #283730;
+      background: #15201c;
+    }
+    .log-filterbar .filter-field { min-width: 130px; }
+    .log-filterbar .filter-field.grow { flex: 1; min-width: 240px; }
+    .log-filterbar label { color: #aebcb6; }
+    .log-filterbar input, .log-filterbar select {
+      width: 100%;
+      min-height: 36px;
+      padding: 7px 9px;
+      color: #eaf1ee;
+      border: 1px solid #43544d;
+      border-radius: 6px;
+      background: #24322d;
+    }
+    .check { display: inline-flex; align-items: center; gap: 7px; color: #bbc7c2; font-size: 12px; }
+    .check input { width: 17px; height: 17px; accent-color: #65d1b7; }
+    .log-output {
+      min-height: 0;
+      margin: 0;
+      padding: 16px;
+      overflow: auto;
+      color: #d8e3df;
+      background: #111a17;
+      font: 12px/1.65 Consolas, "Cascadia Mono", monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      tab-size: 2;
+    }
+    .log-line { display: block; min-height: 1.65em; }
+    .log-line.debug { color: #8fa49b; }
+    .log-line.info { color: #b9d8ff; }
+    .log-line.warn { color: #ffd27a; }
+    .log-line.error { color: #ff9696; font-weight: 650; }
+    .log-output[data-state="empty"] { color: #899b94; }
+    .log-output[data-state="error"] { color: #ffb8b8; }
+
+    .notice {
+      display: none;
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      color: var(--bad);
+      border: 1px solid #eccaca;
+      border-radius: 6px;
+      background: var(--bad-soft);
+    }
+    .notice.visible { display: block; }
+
+    .skeleton {
+      color: transparent !important;
+      border-radius: 4px;
+      background: linear-gradient(90deg, #edf0ee 25%, #f7f9f8 50%, #edf0ee 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.3s infinite linear;
+    }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+
+    @media (max-width: 980px) {
+      .shell { grid-template-columns: 76px minmax(0, 1fr); }
+      .sidebar { padding-inline: 10px; }
+      .brand { justify-content: center; padding-inline: 0; }
+      .brand-copy, .nav-label, .connection { display: none; }
+      .nav button { justify-content: center; padding-inline: 0; }
+      .nav button[aria-selected="true"] { box-shadow: inset 0 -3px #65d1b7; }
+      .service-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .overview-grid { grid-template-columns: 1fr; }
+      .balance-grid { grid-template-columns: 1fr; }
+      .usage-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .usage-stat:nth-child(2) { border-right: 0; }
+      .usage-stat:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+    }
+
+    @media (max-width: 680px) {
+      .shell { display: block; padding-bottom: 66px; }
+      .sidebar {
+        position: fixed;
+        inset: auto 0 0;
+        z-index: 60;
+        width: auto;
+        height: 66px;
+        display: block;
+        padding: 6px 8px;
+        border: 0;
+        border-top: 1px solid #35443e;
+      }
+      .brand, .connection { display: none; }
+      .nav {
+        height: 100%;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 3px;
+        padding: 0;
+      }
+      .nav button {
+        min-width: 0;
+        min-height: 52px;
+        flex-direction: column;
+        gap: 0;
+        padding: 5px 2px;
+      }
+      .nav-icon { height: 23px; line-height: 23px; }
+      .nav-label { display: block; font-size: 10px; }
+      .topbar { min-height: 60px; padding: 8px 14px; }
+      .page-heading p { display: none; }
+      .top-actions .status-pill { display: none; }
+      .button-label { display: none; }
+      .content { padding: 16px 12px 24px; }
+      .service-grid { grid-template-columns: 1fr; }
+      .service-card { padding: 14px; }
+      .facts { grid-template-columns: 1fr; }
+      .fact, .fact:nth-child(2n), .fact:nth-last-child(-n+2) { border-right: 0; border-bottom: 1px solid #edf0ee; }
+      .fact:last-child { border-bottom: 0; }
+      .log-layout { height: calc(100dvh - 100px); min-height: 420px; }
+      .tool-bar { align-items: flex-start; }
+      .tool-bar .button { width: 40px; padding-inline: 8px; }
+      .launch-panel { min-height: 300px; padding: 24px 16px; }
+      .trend-toolbar { align-items: flex-start; flex-direction: column; }
+      .chart-wrap { height: 240px; }
+      .trend-toolbar > .segmented { width: 100%; }
+      .log-toolbar { align-items: flex-start; }
+      .log-controls { flex-wrap: wrap; }
+      .check { min-height: 38px; }
+      .section-heading { align-items: flex-start; }
+      .section-actions { width: 100%; justify-content: stretch; }
+      .section-actions .button { flex: 1; }
+      .form-grid { grid-template-columns: 1fr; }
+      .field.full { grid-column: auto; }
+      .dialog-header, .dialog-footer { padding-inline: 14px; }
+      .dialog-body { padding-inline: 14px; }
+      .usage-toolbar { align-items: stretch; }
+      .filter-field { min-width: calc(50% - 5px); flex: 1; }
+      .usage-toolbar > .button { flex: 1; }
+      .usage-summary { grid-template-columns: 1fr; }
+      .usage-stat, .usage-stat:nth-child(2), .usage-stat:nth-child(-n+2) {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .usage-stat:last-child { border-bottom: 0; }
+      .usage-chart-wrap { height: 300px; padding: 10px; }
+      .pagination { justify-content: center; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">BM</div>
+        <div class="brand-copy"><strong>Bot 管理器</strong><small>本地安全控制台</small></div>
+      </div>
+      <nav class="nav" role="tablist" aria-label="管理器页面">
+        <button type="button" role="tab" aria-selected="true" data-view="overview"><span class="nav-icon" aria-hidden="true">⌂</span><span class="nav-label">概览</span></button>
+        <button type="button" role="tab" aria-selected="false" tabindex="-1" data-view="astrbot"><span class="nav-icon" aria-hidden="true">A</span><span class="nav-label">AstrBot</span></button>
+        <button type="button" role="tab" aria-selected="false" tabindex="-1" data-view="snowluma"><span class="nav-icon" aria-hidden="true">S</span><span class="nav-label">SnowLuma</span></button>
+        <button type="button" role="tab" aria-selected="false" tabindex="-1" data-view="novnc"><span class="nav-icon" aria-hidden="true">Q</span><span class="nav-label">QQ 扫码</span></button>
+        <button type="button" role="tab" aria-selected="false" tabindex="-1" data-view="usage"><span class="nav-icon" aria-hidden="true">∑</span><span class="nav-label">用量</span></button>
+        <button type="button" role="tab" aria-selected="false" tabindex="-1" data-view="logs"><span class="nav-icon" aria-hidden="true">≡</span><span class="nav-label">日志</span></button>
+      </nav>
+      <div class="connection">
+        <p>SSH 隧道目标</p>
+        <strong><服务器地址>:22</strong>
+      </div>
+    </aside>
+
+    <main class="main" id="main-content">
+      <header class="topbar">
+        <div class="page-heading">
+          <h1 id="page-title">运行概览</h1>
+          <p id="page-subtitle">服务器状态、Bot 服务和部署信息</p>
+        </div>
+        <div class="top-actions">
+          <span class="status-pill" id="connection-state"><span class="status-dot"></span><span>正在连接</span></span>
+          <button type="button" class="button icon-only" id="refresh-button" title="刷新状态" aria-label="刷新状态">↻</button>
+        </div>
+      </header>
+
+      <div class="content">
+        <div class="notice" id="status-error" role="alert"></div>
+
+        <section class="view" id="view-overview" role="tabpanel">
+          <div class="section">
+            <div class="section-heading">
+              <div><h2>服务入口</h2><p>通过本机 SSH 转发访问，不暴露新的公网端口</p></div>
+              <span id="last-updated" class="status-pill"><span class="status-dot"></span><span>等待数据</span></span>
+            </div>
+            <div class="service-grid">
+              <article class="service-card" data-service-card="astrbot">
+                <header>
+                  <div class="service-name"><div class="service-glyph">A</div><div><h3>AstrBot</h3><p class="meta">WebUI · 本地端口 16185</p></div></div>
+                  <span class="status-pill service-state"><span class="status-dot"></span><span>检测中</span></span>
+                </header>
+                <div class="actions"><a class="button primary external-link" data-url="astrbot" target="_blank" rel="noreferrer">新窗口打开</a></div>
+              </article>
+              <article class="service-card" data-service-card="snowluma">
+                <header>
+                  <div class="service-name"><div class="service-glyph">S</div><div><h3>SnowLuma</h3><p class="meta">WebUI · 本地端口 15099</p></div></div>
+                  <span class="status-pill service-state"><span class="status-dot"></span><span>检测中</span></span>
+                </header>
+                <div class="actions"><a class="button primary external-link" data-url="snowluma" target="_blank" rel="noreferrer">新窗口打开</a></div>
+              </article>
+              <article class="service-card" data-service-card="novnc">
+                <header>
+                  <div class="service-name"><div class="service-glyph">Q</div><div><h3>QQ 扫码</h3><p class="meta">noVNC · 本地端口 16081</p></div></div>
+                  <span class="status-pill service-state"><span class="status-dot"></span><span>检测中</span></span>
+                </header>
+                <div class="actions"><a class="button primary external-link" data-url="novnc" target="_blank" rel="noreferrer">新窗口打开</a></div>
+              </article>
+            </div>
+          </div>
+
+          <div class="overview-grid section">
+            <section class="panel">
+              <div class="panel-title"><h2>资源使用</h2><span>服务器实时采样</span></div>
+              <div class="metric-list">
+                <div class="metric-row"><label>CPU</label><div class="track"><span id="cpu-bar"></span></div><div class="metric-value" id="cpu-value">--</div></div>
+                <div class="metric-row"><label>内存</label><div class="track"><span id="memory-bar"></span></div><div class="metric-value" id="memory-value">--</div></div>
+                <div class="metric-row"><label>系统盘</label><div class="track"><span id="disk-bar"></span></div><div class="metric-value" id="disk-value">--</div></div>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="panel-title"><h2>服务器信息</h2><span id="server-health">读取中</span></div>
+              <div class="facts">
+                <div class="fact"><span>主机名</span><strong id="hostname">--</strong></div>
+                <div class="fact"><span>运行时间</span><strong id="uptime">--</strong></div>
+                <div class="fact"><span>操作系统</span><strong id="os-name" title="">--</strong></div>
+                <div class="fact"><span>负载 1 / 5 / 15</span><strong id="load-average">--</strong></div>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel section" aria-labelledby="resource-trend-title">
+            <div class="panel-title trend-toolbar">
+              <div><h2 id="resource-trend-title">资源趋势</h2><span id="chart-period">最近 24 小时 · 每小时聚合</span></div>
+              <div class="segmented metrics-ranges" role="group" aria-label="资源趋势时间范围">
+                <button type="button" data-metrics-range="1h" aria-pressed="false" title="近 1 小时，60 秒采样">1 小时</button>
+                <button type="button" data-metrics-range="6h" aria-pressed="false" title="近 6 小时，60 秒采样">6 小时</button>
+                <button type="button" data-metrics-range="12h" aria-pressed="false" title="近 12 小时，每小时聚合">12 小时</button>
+                <button type="button" data-metrics-range="24h" aria-pressed="true" title="最近 24 小时，每小时聚合">24 小时</button>
+                <button type="button" data-metrics-range="7d" aria-pressed="false" title="近 7 日，每小时聚合">7 日</button>
+              </div>
+            </div>
+            <div class="chart-area">
+              <div class="chart-legend" aria-hidden="true">
+                <span class="legend-item"><span class="legend-line" style="background:#087e6a"></span>CPU</span>
+                <span class="legend-item"><span class="legend-line" style="background:#b06617"></span>内存</span>
+                <span class="legend-item"><span class="legend-line" style="background:#2877b5"></span>系统盘</span>
+              </div>
+              <div class="chart-wrap">
+                <canvas id="resource-chart" role="img" aria-label="资源趋势正在载入"></canvas>
+                <div class="chart-tooltip" id="resource-tooltip" hidden></div>
+              </div>
+              <p class="chart-summary" id="chart-summary" aria-live="polite">正在读取历史样本…</p>
+            </div>
+          </section>
+
+          <section class="section" aria-labelledby="balance-title">
+            <div class="section-heading">
+              <div><h2 id="balance-title">账户余额</h2><p id="balance-updated">服务端安全查询，凭证不会发送到浏览器</p></div>
+              <div class="section-actions">
+                <button type="button" class="button" id="configure-balances">配置接口</button>
+                <button type="button" class="button" id="refresh-balances">刷新余额</button>
+              </div>
+            </div>
+            <div class="balance-grid" id="balance-grid">
+              <article class="balance-card" id="deepseek-balance">
+                <header><div><h3>DeepSeek</h3><p class="provider-meta">API 账户余额</p></div><span class="status-pill provider-state"><span class="status-dot"></span><span>读取中</span></span></header>
+                <div class="balance-main">--</div>
+                <p class="balance-details">正在连接 DeepSeek 余额接口…</p>
+              </article>
+              <article class="balance-card" id="volcengine-balance">
+                <header><div><h3>火山引擎语音合成</h3><p class="provider-meta">费用中心账户可用余额</p></div><span class="status-pill provider-state"><span class="status-dot"></span><span>读取中</span></span></header>
+                <div class="balance-main">--</div>
+                <p class="balance-details">账户余额不包含语音资源包剩余字符数。</p>
+              </article>
+              <article class="balance-card" id="bailian-balance">
+                <header><div><h3>阿里云百炼</h3><p class="provider-meta">阿里云账户可用额度</p></div><span class="status-pill provider-state"><span class="status-dot"></span><span>读取中</span></span></header>
+                <div class="balance-main">--</div>
+                <p class="balance-details">正在连接阿里云费用中心…</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel section">
+            <div class="panel-title"><h2>已部署的机器人</h2><span id="bot-summary">等待数据</span></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>名称</th><th>镜像 / 类型</th><th>运行状态</th><th>CPU</th><th>内存</th></tr></thead>
+                <tbody id="bot-table"><tr><td colspan="5"><div class="empty">正在读取部署信息…</div></td></tr></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="view-astrbot" role="tabpanel" hidden>
+          <div class="tool-frame">
+            <div class="tool-bar"><div><strong>AstrBot WebUI</strong><span>通过 127.0.0.1:16185 访问</span></div><a class="button external-link" data-url="astrbot" target="_blank" rel="noreferrer"><span aria-hidden="true">↗</span><span class="button-label">新窗口打开</span></a></div>
+            <div class="launch-panel">
+              <h2>AstrBot 需要在新窗口中使用</h2>
+              <p>AstrBot 的安全策略不允许嵌入其他页面。SSH 隧道已经将它映射到本机回环地址。</p>
+              <a class="button primary external-link" data-url="astrbot" target="_blank" rel="noreferrer">新窗口打开 AstrBot</a>
+              <div class="credential-note"><strong>独立认证</strong>AstrBot 的账户和密码由 AstrBot 自己管理，与 Bot 管理器登录凭证无关。</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-snowluma" role="tabpanel" hidden>
+          <div class="tool-frame">
+            <div class="tool-bar"><div><strong>SnowLuma WebUI</strong><span>通过 127.0.0.1:15099 访问</span></div><a class="button external-link" data-url="snowluma" target="_blank" rel="noreferrer"><span aria-hidden="true">↗</span><span class="button-label">新窗口打开</span></a></div>
+            <div class="launch-panel">
+              <h2>SnowLuma 需要在新窗口中使用</h2>
+              <p>新窗口仍通过 SSH 隧道访问，不会把 SnowLuma 暴露到公网。</p>
+              <a class="button primary external-link" data-url="snowluma" target="_blank" rel="noreferrer">新窗口打开 SnowLuma</a>
+              <div class="credential-note"><strong>登录凭证</strong>用户名为 <code>admin</code>。密码由 SnowLuma 首次启动生成；忘记时运行工具包中的 <code>show-credentials</code> 脚本查看可恢复信息。</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-novnc" role="tabpanel" hidden>
+          <div class="tool-frame">
+            <div class="tool-bar"><div><strong>QQ 登录与扫码</strong><span>通过 noVNC 连接服务器桌面</span></div><a class="button external-link" data-url="novnc" target="_blank" rel="noreferrer"><span aria-hidden="true">↗</span><span class="button-label">新窗口打开</span></a></div>
+            <div class="launch-panel">
+              <h2>QQ 扫码需要在新窗口中使用</h2>
+              <p>打开 noVNC 后输入远程桌面密码，再在服务器桌面中完成 QQ 扫码。</p>
+              <a class="button primary external-link" data-url="novnc" target="_blank" rel="noreferrer">新窗口打开 QQ 扫码</a>
+              <div class="credential-note"><strong>远程桌面凭证</strong>noVNC 只需要密码，没有用户名。运行工具包中的 <code>show-credentials</code> 脚本可从服务器受保护的配置中读取当前密码。</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-usage" role="tabpanel" hidden>
+          <div class="section">
+            <div class="section-heading">
+              <div>
+                <h2>插件 Token 与费用</h2>
+                <p>主对话统一计入 shared_chat；无法归属到具体插件的调用计入对话消费</p>
+              </div>
+              <div class="section-actions">
+                <button type="button" class="button" id="configure-pricing">配置单价</button>
+                <a class="button" id="export-usage" href="/api/usage-export.csv">导出 CSV</a>
+              </div>
+            </div>
+            <div class="usage-toolbar" aria-label="用量报表筛选">
+              <div class="filter-field">
+                <label for="usage-range">时间范围</label>
+                <select id="usage-range">
+                  <option value="today" selected>今日（实时）</option>
+                  <option value="yesterday">昨日</option>
+                  <option value="24h">最近 24 小时</option>
+                  <option value="7d">最近 7 日</option>
+                  <option value="30d">最近 30 日</option>
+                  <option value="all">全部记录</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <label for="usage-plugin">插件</label>
+                <select id="usage-plugin"><option value="">全部插件</option></select>
+              </div>
+              <div class="filter-field">
+                <label for="usage-model">模型</label>
+                <select id="usage-model"><option value="">全部模型</option></select>
+              </div>
+              <div class="filter-field">
+                <label for="usage-status">状态</label>
+                <select id="usage-status"><option value="">全部状态</option></select>
+              </div>
+              <button type="button" class="button primary" id="refresh-usage">刷新报表</button>
+            </div>
+          </div>
+
+          <section class="panel section usage-summary" aria-label="用量汇总">
+            <div class="usage-stat"><span>调用次数</span><strong id="usage-calls">--</strong><small id="usage-failures">等待数据</small></div>
+            <div class="usage-stat"><span>Token 总量</span><strong id="usage-tokens">--</strong><small id="usage-token-split">普通 / 缓存 / 输出</small></div>
+            <div class="usage-stat"><span>已采集调用估算费用</span><strong id="usage-amount">--</strong><small id="usage-unpriced">未配置单价的调用单独标记</small></div>
+            <div class="usage-stat"><span>延迟 p95</span><strong id="usage-latency">--</strong><small id="usage-ttft">TTFT p95 --</small></div>
+          </section>
+
+          <section class="panel section">
+            <div class="panel-title">
+              <div><h2 id="usage-day-title">每日模型用量</h2><span id="usage-day-note">北京时间自然日 · 非供应商账单</span></div>
+              <div class="segmented usage-view-switch" role="group" aria-label="统计粒度">
+                <button type="button" data-usage-granularity="day" aria-pressed="true">按日</button>
+                <button type="button" data-usage-granularity="hour" aria-pressed="false">按小时</button>
+              </div>
+            </div>
+            <div class="usage-chart-wrap" id="usage-day-chart-wrap" hidden>
+              <canvas id="usage-day-chart" role="img" aria-label="按日消费柱状图"></canvas>
+              <div class="chart-tooltip" id="usage-day-tooltip" hidden></div>
+            </div>
+            <div class="table-wrap" id="usage-day-table-wrap">
+              <table>
+                <thead id="usage-day-head"><tr><th>日期</th><th class="numeric">调用</th><th class="numeric">普通输入</th><th class="numeric">缓存输入</th><th class="numeric">输出</th><th class="numeric">Token 合计</th><th class="numeric">估算费用（元）</th><th class="numeric">p95 延迟</th><th class="numeric">失败</th></tr></thead>
+                <tbody id="usage-day-table"><tr><td colspan="9"><div class="empty">正在计算每日消费…</div></td></tr></tbody>
+              </table>
+            </div>
+            <div class="usage-chart-wrap" id="usage-hour-chart-wrap" hidden>
+              <canvas id="usage-hour-chart" role="img" aria-label="按小时消费柱状图"></canvas>
+              <div class="chart-tooltip" id="usage-hour-tooltip" hidden></div>
+            </div>
+            <div class="empty" id="usage-hour-unsupported" hidden>当前时间范围不支持按小时查看。按小时仅在「今日（实时）」「昨日」「最近 24 小时」下可用，请切换时间范围，或改用「按日」。</div>
+          </section>
+          <section class="panel section">
+            <div class="panel-title">
+              <div><h2>按插件汇总</h2><span id="usage-period">等待数据</span></div>
+              <div class="segmented usage-view-switch" role="group" aria-label="插件汇总显示方式">
+                <button type="button" data-usage-view="table" aria-pressed="true">表格</button>
+                <button type="button" data-usage-view="bar" aria-pressed="false">柱状图</button>
+                <button type="button" data-usage-view="line" aria-pressed="false">折线图</button>
+              </div>
+            </div>
+            <div class="table-wrap" id="usage-plugin-table-wrap">
+              <table>
+                <thead><tr><th>插件 / 归因</th><th class="numeric">调用</th><th class="numeric">普通输入</th><th class="numeric">缓存输入</th><th class="numeric">输出</th><th class="numeric">Token 合计</th><th class="numeric">已核算金额</th><th class="numeric">p95 延迟</th><th class="numeric">失败</th></tr></thead>
+                <tbody id="usage-plugin-table"><tr><td colspan="9"><div class="empty">打开本页后读取用量数据。</div></td></tr></tbody>
+              </table>
+            </div>
+            <div class="usage-chart-wrap" id="usage-plugin-chart-wrap" hidden>
+              <canvas id="usage-plugin-chart" role="img" aria-label="插件估算费用图表"></canvas>
+            </div>
+          </section>
+
+          <section class="panel section">
+            <div class="panel-title"><h2>按实际模型汇总</h2><span>包含对话、向量化与路由请求；跨模型重试分别统计 Token</span></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>模型</th><th class="numeric">涉及调用</th><th class="numeric">普通输入</th><th class="numeric">缓存输入</th><th class="numeric">输出</th><th class="numeric">Token 合计</th><th class="numeric">免费 Token</th><th class="numeric">已核算金额</th></tr></thead>
+                <tbody id="usage-model-table"><tr><td colspan="8"><div class="empty">等待模型用量。</div></td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel section">
+            <div class="panel-title"><h2>调用明细</h2><span id="usage-detail-count">最多显示 100 条，完整数据可导出 CSV</span></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>时间</th><th>插件</th><th>路由</th><th>模型</th><th class="numeric">Token</th><th class="numeric">金额</th><th class="numeric">延迟</th><th>状态</th></tr></thead>
+                <tbody id="usage-detail-table"><tr><td colspan="8"><div class="empty">暂无明细。</div></td></tr></tbody>
+              </table>
+            </div>
+            <nav class="pagination" aria-label="调用明细分页">
+              <button type="button" class="button" id="usage-prev-page">上一页</button>
+              <span id="usage-page-status">第 1 / 1 页</span>
+              <button type="button" class="button" id="usage-next-page">下一页</button>
+            </nav>
+          </section>
+          <p class="usage-note" id="usage-quality-note">报表不保存提示词、回复正文或用户标识。</p>
+        </section>
+
+        <section class="view" id="view-logs" role="tabpanel" hidden>
+          <div class="log-layout">
+            <div class="log-toolbar">
+              <div class="log-controls">
+                <label for="log-service">服务</label>
+                <select id="log-service"><option value="astrbot">AstrBot</option><option value="snowluma">SnowLuma</option><option value="onebot">OneBot / QQ</option><option value="novnc">noVNC</option></select>
+                <div class="segmented" role="group" aria-label="日志排列顺序">
+                  <button type="button" data-log-order="asc" aria-pressed="true">正序</button>
+                  <button type="button" data-log-order="desc" aria-pressed="false">倒序</button>
+                </div>
+                <button type="button" class="button" id="load-logs">刷新日志</button>
+              </div>
+              <label class="check"><input type="checkbox" id="auto-scroll" checked>自动滚到底部</label>
+            </div>
+            <div class="log-filterbar" aria-label="日志忽略策略">
+              <div class="filter-field">
+                <label for="log-min-level">最低等级</label>
+                <select id="log-min-level">
+                  <option value="debug">DEBUG 及以上</option>
+                  <option value="info">INFO 及以上</option>
+                  <option value="warn">WARN 及以上</option>
+                  <option value="error">仅 ERROR</option>
+                </select>
+              </div>
+              <div class="filter-field grow">
+                <label for="log-ignore">忽略规则</label>
+                <input id="log-ignore" type="text" maxlength="500" placeholder="多个关键词用逗号分隔">
+              </div>
+              <label class="check"><input type="checkbox" id="log-ignore-regex">按正则表达式匹配</label>
+            </div>
+            <div class="log-output" id="log-output" data-state="empty" role="log" aria-live="polite">选择服务后刷新日志。</div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="balance-config-dialog" aria-labelledby="balance-config-title">
+    <form id="balance-config-form">
+      <div class="dialog-shell">
+        <header class="dialog-header">
+          <div>
+            <h2 id="balance-config-title">配置余额接口</h2>
+            <p>已保存的密钥默认隐藏，可在本窗口临时显示。</p>
+          </div>
+          <div class="section-actions">
+            <button type="button" class="button" id="toggle-provider-secrets">显示密钥</button>
+            <button type="button" class="button icon-only" id="close-balance-config" aria-label="关闭配置窗口" title="关闭">×</button>
+          </div>
+        </header>
+        <div class="dialog-body">
+          <section class="form-section">
+            <div class="form-section-heading">
+              <div><h3>DeepSeek</h3><p id="deepseek-config-state">读取配置状态…</p></div>
+            </div>
+            <div class="form-grid">
+              <div class="field full">
+                <label for="deepseek-api-key">API Key</label>
+                <input id="deepseek-api-key" type="password" maxlength="2048" autocomplete="off" placeholder="留空则保留已保存的密钥">
+              </div>
+              <label class="inline-check"><input id="deepseek-clear" type="checkbox">清除已保存的 API Key</label>
+            </div>
+          </section>
+
+          <section class="form-section">
+            <div class="form-section-heading">
+              <div><h3>火山引擎</h3><p id="volcengine-config-state">读取配置状态…</p></div>
+            </div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="volc-access-key">Access Key ID</label>
+                <input id="volc-access-key" type="password" maxlength="2048" autocomplete="off" placeholder="留空则保留">
+              </div>
+              <div class="field">
+                <label for="volc-secret-key">Secret Access Key</label>
+                <input id="volc-secret-key" type="password" maxlength="2048" autocomplete="off" placeholder="留空则保留">
+              </div>
+              <label class="inline-check"><input id="volc-clear" type="checkbox">清除已保存的 AK / SK</label>
+            </div>
+          </section>
+
+          <section class="form-section">
+            <div class="form-section-heading">
+              <div><h3>阿里云百炼</h3><p id="bailian-config-state">读取配置状态…</p></div>
+            </div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="bailian-access-key">Access Key ID</label>
+                <input id="bailian-access-key" type="password" maxlength="2048" autocomplete="off" placeholder="留空则保留">
+              </div>
+              <div class="field">
+                <label for="bailian-secret-key">Access Key Secret</label>
+                <input id="bailian-secret-key" type="password" maxlength="2048" autocomplete="off" placeholder="留空则保留">
+              </div>
+              <label class="inline-check"><input id="bailian-clear" type="checkbox">清除已保存的 AK / SK</label>
+            </div>
+            <p class="form-hint">只读权限即可（AliyunBSSReadOnlyAccess）。这里查的是阿里云账户可用额度，不含百炼资源包与免费额度。</p>
+          </section>
+
+          <section class="form-section">
+            <div class="form-section-heading">
+              <div><h3>自定义 API</h3><p>HTTPS GET 接口，使用 JSON 路径提取余额。</p></div>
+              <button type="button" class="button" id="add-custom-provider">添加卡片</button>
+            </div>
+            <div class="custom-provider-list" id="custom-provider-list"></div>
+          </section>
+        </div>
+        <footer class="dialog-footer">
+          <p class="form-message" id="balance-config-message" role="status" aria-live="polite"></p>
+          <div class="section-actions">
+            <button type="button" class="button" id="cancel-balance-config">取消</button>
+            <button type="submit" class="button primary" id="save-balance-config">保存配置</button>
+          </div>
+        </footer>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="pricing-dialog" aria-labelledby="pricing-dialog-title">
+    <form id="pricing-form">
+      <div class="dialog-shell">
+        <header class="dialog-header">
+          <div>
+            <h2 id="pricing-dialog-title">配置模型单价</h2>
+            <p>金额单位为人民币元 / 百万 Token，按生效时间匹配。</p>
+          </div>
+          <button type="button" class="button icon-only" id="close-pricing" aria-label="关闭单价窗口" title="关闭">×</button>
+        </header>
+        <div class="dialog-body">
+          <section class="form-section">
+            <div class="form-section-heading">
+              <div><h3>当前模型价格</h3><p>普通输入、缓存输入和输出分别计价；历史版本收起，留空表示该项待配置。</p></div>
+              <button type="button" class="button" id="add-price-entry">添加价格</button>
+            </div>
+            <div id="price-entry-list"></div>
+            <details id="price-history"><summary>历史价格（仅查看，用于旧记录核算）</summary><div id="price-history-list"></div></details>
+          </section>
+          <section class="form-section">
+            <div class="form-section-heading">
+              <div><h3>各模型免费 Token 额度</h3><p>输入和输出共用额度；填写累计起点、起点前已用量和到期时间。未采集的外部消耗需手动补入。</p></div>
+              <button type="button" class="button" id="add-free-quota">添加额度</button>
+            </div>
+            <div id="free-quota-list"></div>
+          </section>
+        </div>
+        <footer class="dialog-footer">
+          <p class="form-message" id="pricing-message" role="status" aria-live="polite"></p>
+          <div class="section-actions">
+            <button type="button" class="button" id="cancel-pricing">取消</button>
+            <button type="submit" class="button primary" id="save-pricing">保存单价</button>
+          </div>
+        </footer>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    (() => {
+      "use strict";
+      const state = {
+        config: null,
+        status: null,
+        metrics: null,
+        metricsRange: "24h",
+        resourcePoints: [],
+        resourceHover: null,
+        providerConfig: null,
+        providerSecretsVisible: false,
+        usage: null,
+        usagePricing: null,
+        usageOffset: 0,
+        usageView: "table",
+        usageGranularity: "day",
+        hourlySlots: [],
+        dailySlots: [],
+        logOrder: "asc",
+        rawLogs: "",
+        currentView: "overview",
+        timer: null
+      };
+      const viewMeta = {
+        overview: ["运行概览", "服务器状态、Bot 服务和部署信息"],
+        astrbot: ["AstrBot", "机器人框架 WebUI"],
+        snowluma: ["SnowLuma", "SnowLuma 管理界面"],
+        novnc: ["QQ 扫码", "noVNC 远程桌面"],
+        usage: ["用量报表", "按模型与插件查看对话、向量化、API 路由 Token 用量"],
+        logs: ["运行日志", "查看各服务最近的运行输出"]
+      };
+      const $ = (selector, root = document) => root.querySelector(selector);
+      const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+      function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>"']/g, char => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+        })[char]);
+      }
+
+      async function getJson(path, headers = {}) {
+        const response = await fetch(path, { cache: "no-store", headers });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body.ok === false) throw new Error(body.detail || body.error || `HTTP ${response.status}`);
+        return body;
+      }
+
+      async function postJson(path, payload, confirmation = "provider-config") {
+        const response = await fetch(path, {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Bot-Manager-Request": confirmation
+          },
+          body: JSON.stringify(payload)
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body.ok === false) throw new Error(body.detail || body.error || `HTTP ${response.status}`);
+        return body;
+      }
+
+      function setConnection(kind, text) {
+        const badge = $("#connection-state");
+        badge.className = `status-pill ${kind || ""}`;
+        $("span:last-child", badge).textContent = text;
+      }
+
+      function showError(message) {
+        const notice = $("#status-error");
+        notice.textContent = message || "";
+        notice.classList.toggle("visible", Boolean(message));
+      }
+
+      function setServiceState(id, online) {
+        const card = $(`[data-service-card="${id}"]`);
+        if (!card) return;
+        const badge = $(".service-state", card);
+        badge.className = `status-pill service-state ${online ? "online" : "error"}`;
+        $("span:last-child", badge).textContent = online ? "运行中" : "不可用";
+      }
+
+      function formatBytes(bytes) {
+        const value = Number(bytes) || 0;
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        if (!value) return "0 B";
+        const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+        return `${(value / Math.pow(1024, index)).toFixed(index > 2 ? 1 : 0)} ${units[index]}`;
+      }
+
+      function formatUptime(seconds) {
+        let remaining = Math.max(0, Number(seconds) || 0);
+        const days = Math.floor(remaining / 86400);
+        remaining %= 86400;
+        const hours = Math.floor(remaining / 3600);
+        const minutes = Math.floor((remaining % 3600) / 60);
+        return days ? `${days} 天 ${hours} 小时` : `${hours} 小时 ${minutes} 分`;
+      }
+
+      function updateMetric(name, used, total, directPercent) {
+        const percent = directPercent != null ? Number(directPercent) : (total ? used / total * 100 : 0);
+        const safe = Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0));
+        $(`#${name}-bar`).style.width = `${safe}%`;
+        $(`#${name}-value`).textContent = `${safe.toFixed(0)}%`;
+      }
+
+      function drawResourceChart() {
+        const canvas = $("#resource-chart");
+        const wrapper = canvas.parentElement;
+        const rect = wrapper.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const ratio = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.round(rect.width * ratio);
+        canvas.height = Math.round(rect.height * ratio);
+        const context = canvas.getContext("2d");
+        context.scale(ratio, ratio);
+
+        const width = rect.width;
+        const height = rect.height;
+        const padding = { top: 10, right: 14, bottom: 28, left: 38 };
+        const plotWidth = width - padding.left - padding.right;
+        const plotHeight = height - padding.top - padding.bottom;
+        context.clearRect(0, 0, width, height);
+        context.font = '11px "Segoe UI", "Microsoft YaHei UI", sans-serif';
+        context.textBaseline = "middle";
+
+        const metrics = state.metrics;
+        const samples = metrics?.samples || [];
+        context.strokeStyle = "#e5eae7";
+        context.fillStyle = "#6a7772";
+        context.lineWidth = 1;
+        [0, 25, 50, 75, 100].forEach(value => {
+          const y = padding.top + plotHeight * (1 - value / 100);
+          context.beginPath();
+          context.moveTo(padding.left, y);
+          context.lineTo(width - padding.right, y);
+          context.stroke();
+          context.textAlign = "right";
+          context.fillText(`${value}%`, padding.left - 7, y);
+        });
+
+        const from = metrics?.from || Math.floor(Date.now() / 1000) - 86400;
+        const to = metrics?.to || Math.floor(Date.now() / 1000);
+        const timeLabels = state.metricsRange === "7d" ? 7 : 6;
+        for (let index = 0; index <= timeLabels; index += 1) {
+          const timestamp = from + (to - from) * index / timeLabels;
+          const x = padding.left + plotWidth * index / timeLabels;
+          const date = new Date(timestamp * 1000);
+          const label = state.metricsRange === "7d"
+            ? date.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })
+            : date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+          context.fillStyle = "#6a7772";
+          context.textAlign = index === 0 ? "left" : index === timeLabels ? "right" : "center";
+          context.fillText(label, x, height - 10);
+        }
+
+        if (!samples.length) {
+          context.fillStyle = "#61706a";
+          context.textAlign = "center";
+          context.font = '13px "Segoe UI", "Microsoft YaHei UI", sans-serif';
+          context.fillText("暂无历史样本，部署后将每分钟开始采集", padding.left + plotWidth / 2, padding.top + plotHeight / 2);
+          canvas.setAttribute("aria-label", "资源趋势暂无历史样本");
+          $("#chart-summary").textContent = "暂无历史样本。部署后每分钟采集一次，几分钟后即可看到趋势。";
+          return;
+        }
+
+        // 断线阈值按实际采样间距自适应：老数据是 60 秒一条，新数据是 10 秒，
+        // 写死 bucketSeconds 会在切换当天把旧样本全判成断档。
+        const spacings = [];
+        for (let index = 1; index < samples.length; index += 1) {
+          const delta = samples[index].timestamp - samples[index - 1].timestamp;
+          if (delta > 0) spacings.push(delta);
+        }
+        spacings.sort((left, right) => left - right);
+        const medianSpacing = spacings.length
+          ? spacings[Math.floor(spacings.length / 2)]
+          : (metrics.bucketSeconds || 60);
+        const gapLimit = Math.max(medianSpacing * 2.5, (metrics.bucketSeconds || 60) * 1.5, 15);
+        const series = [
+          { key: "cpuPercent", name: "CPU", color: "#087e6a" },
+          { key: "memoryPercent", name: "内存", color: "#b06617" },
+          { key: "diskPercent", name: "系统盘", color: "#2877b5" }
+        ];
+        const xOf = timestamp =>
+          padding.left + (timestamp - from) / Math.max(1, to - from) * plotWidth;
+        const yOf = value =>
+          padding.top + (1 - Math.max(0, Math.min(100, value)) / 100) * plotHeight;
+        series.forEach(item => {
+          context.beginPath();
+          context.strokeStyle = item.color;
+          context.lineWidth = 2;
+          context.lineJoin = "round";
+          context.lineCap = "round";
+          let previous = null;
+          samples.forEach(sample => {
+            const value = Number(sample[item.key]);
+            if (!Number.isFinite(value)) {
+              previous = null;
+              return;
+            }
+            const x = xOf(sample.timestamp);
+            const y = yOf(value);
+            const gap = previous && sample.timestamp - previous.timestamp > gapLimit;
+            if (!previous || gap) context.moveTo(x, y);
+            else context.lineTo(x, y);
+            previous = sample;
+          });
+          context.stroke();
+          if (samples.length === 1) {
+            const value = Number(samples[0][item.key]);
+            if (Number.isFinite(value)) {
+              context.beginPath();
+              context.fillStyle = item.color;
+              context.arc(xOf(samples[0].timestamp), yOf(value), 3, 0, Math.PI * 2);
+              context.fill();
+            }
+          }
+        });
+
+        // 悬停命中区：整张图按 x 找最近的采样点
+        state.resourcePoints = samples.map(sample => {
+          const tops = series
+            .map(item => Number(sample[item.key]))
+            .filter(Number.isFinite)
+            .map(yOf);
+          return {
+            x: xOf(sample.timestamp),
+            topY: tops.length ? Math.min(...tops) : padding.top,
+            sample
+          };
+        });
+        const hoverIndex = state.resourceHover;
+        if (hoverIndex != null && samples[hoverIndex]) {
+          const point = state.resourcePoints[hoverIndex];
+          context.save();
+          if (context.setLineDash) context.setLineDash([4, 3]);
+          context.strokeStyle = "rgba(8, 126, 106, 0.5)";
+          context.lineWidth = 1;
+          context.beginPath();
+          context.moveTo(point.x, padding.top);
+          context.lineTo(point.x, padding.top + plotHeight);
+          context.stroke();
+          context.restore();
+          series.forEach(item => {
+            const value = Number(samples[hoverIndex][item.key]);
+            if (!Number.isFinite(value)) return;
+            context.beginPath();
+            context.fillStyle = item.color;
+            context.arc(point.x, yOf(value), 3.2, 0, Math.PI * 2);
+            context.fill();
+          });
+        }
+
+        const display = value => Number.isFinite(Number(value)) ? `${Number(value).toFixed(0)}%` : "--";
+        const values = key => samples.map(sample => Number(sample[key])).filter(Number.isFinite);
+        const max = key => values(key).length ? `${Math.max(...values(key)).toFixed(0)}%` : "--";
+        const latest = samples[samples.length - 1];
+        const summary = `最新 CPU ${display(latest.cpuPercent)}，内存 ${display(latest.memoryPercent)}，系统盘 ${display(latest.diskPercent)}；区间峰值 CPU ${max("cpuPercent")}。`;
+        canvas.setAttribute("aria-label", summary);
+        $("#chart-summary").textContent = `${summary} 共 ${samples.length} 个聚合点；采样中断会显示为空档。`;
+      }
+
+      function resourceTooltipHtml(sample) {
+        const percent = value =>
+          Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}%` : "—";
+        const time = new Date(sample.timestamp * 1000).toLocaleString("zh-CN", {
+          hour12: false,
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit"
+        });
+        const rows = [
+          ["CPU", percent(sample.cpuPercent)],
+          ["内存", percent(sample.memoryPercent)],
+          ["系统盘", percent(sample.diskPercent)]
+        ];
+        if (Number(sample.sampleCount) > 1) {
+          rows.push(["本点样本", `${formatInteger(sample.sampleCount)} 个`]);
+        }
+        return `<strong>${escapeHtml(time)}</strong>` +
+          rows.map(([label, value]) => `<span>${label}<b>${value}</b></span>`).join("");
+      }
+
+      function bindResourceHover() {
+        const canvas = $("#resource-chart");
+        const tooltip = $("#resource-tooltip");
+        if (!canvas || !tooltip) return;
+        const clear = () => {
+          tooltip.hidden = true;
+          if (state.resourceHover != null) {
+            state.resourceHover = null;
+            drawResourceChart();
+          }
+        };
+        canvas.addEventListener("mousemove", event => {
+          const points = state.resourcePoints || [];
+          if (!points.length) return;
+          const rect = canvas.getBoundingClientRect();
+          const offsetX = event.clientX - rect.left;
+          let nearest = -1;
+          let nearestDistance = Infinity;
+          for (let index = 0; index < points.length; index += 1) {
+            const distance = Math.abs(points[index].x - offsetX);
+            if (distance < nearestDistance) {
+              nearestDistance = distance;
+              nearest = index;
+            }
+          }
+          if (nearest < 0 || nearestDistance > 48) {
+            clear();
+            return;
+          }
+          if (state.resourceHover !== nearest) {
+            state.resourceHover = nearest;
+            drawResourceChart();
+          }
+          const point = points[nearest];
+          tooltip.innerHTML = resourceTooltipHtml(point.sample);
+          tooltip.hidden = false;
+          const boundWidth = canvas.parentElement.getBoundingClientRect().width;
+          tooltip.style.left = `${Math.min(Math.max(point.x, 96), Math.max(96, boundWidth - 96))}px`;
+          tooltip.style.top = `${Math.max(point.topY - 8, 8)}px`;
+        });
+        canvas.addEventListener("mouseleave", clear);
+      }
+
+      const METRICS_RANGE_LABELS = {
+        "1h": "近 1 小时 · 60 秒采样",
+        "6h": "近 6 小时 · 60 秒采样",
+        "12h": "近 12 小时 · 每小时聚合",
+        "24h": "最近 24 小时 · 每小时聚合",
+        "7d": "近 7 日 · 每小时聚合"
+      };
+
+      async function loadMetrics(rangeName) {
+        state.metricsRange = rangeName;
+        state.resourceHover = null;
+        $("#resource-tooltip").hidden = true;
+        $$("[data-metrics-range]").forEach(button => {
+          button.setAttribute("aria-pressed", String(button.dataset.metricsRange === rangeName));
+        });
+        $("#chart-period").textContent =
+          METRICS_RANGE_LABELS[rangeName] || METRICS_RANGE_LABELS["24h"];
+        $("#chart-summary").textContent = "正在读取历史样本…";
+        try {
+          state.metrics = await getJson(`/api/metrics?range=${encodeURIComponent(rangeName)}`);
+          drawResourceChart();
+        } catch (error) {
+          state.metrics = null;
+          drawResourceChart();
+          $("#chart-summary").textContent = `历史监控读取失败：${error.message}`;
+        }
+      }
+
+      function setProviderState(card, kind, text) {
+        const badge = $(".provider-state", card);
+        badge.className = `status-pill provider-state ${kind || ""}`;
+        $("span:last-child", badge).textContent = text;
+      }
+
+      function formatBalance(value, currency) {
+        const amount = Number(value);
+        if (!Number.isFinite(amount)) return "--";
+        return `${amount.toFixed(2)}<small>${escapeHtml(currency || "CNY")}</small>`;
+      }
+
+      function renderProvider(cardId, provider, type) {
+        const card = $(`#${cardId}`);
+        const main = $(".balance-main", card);
+        const details = $(".balance-details", card);
+        if (!provider?.configured || provider.status === "unconfigured") {
+          setProviderState(card, "", "未配置");
+          main.textContent = "--";
+          details.textContent = "点击“配置接口”填写访问凭证。";
+          return;
+        }
+        if (provider.status !== "ok") {
+          setProviderState(card, "error", provider.status === "auth_error" ? "认证失败" : "查询失败");
+          main.textContent = "--";
+          details.textContent = provider.status === "auth_error"
+            ? "请重新配置该服务的访问密钥。"
+            : "供应商接口暂时不可用，请稍后刷新。";
+          return;
+        }
+        setProviderState(card, provider.available === false ? "warn" : "online", provider.available === false ? "余额不足" : "可用");
+        if (type === "deepseek") {
+          const preferred = (provider.balances || []).find(item => item.currency === "CNY") || provider.balances?.[0];
+          main.innerHTML = preferred ? formatBalance(preferred.total, preferred.currency) : "--";
+          if (!preferred) {
+            details.textContent = "接口未返回余额明细。";
+          } else {
+            const observation = provider.balanceObservation;
+            const observed = observation?.sampleCount > 1
+              ? ` · 今日${observation.isFullDay ? "" : "首个快照后"}余额净减少 ¥${Math.max(0, Number(observation.netDecrease) || 0).toFixed(2)}`
+              : " · 今日余额快照已开始";
+            details.textContent =
+              `充值余额 ${preferred.toppedUp || "0"} · 赠送余额 ${preferred.granted || "0"}${observed}`;
+          }
+        } else if (type === "bailian") {
+          main.innerHTML = formatBalance(provider.availableBalance, provider.currency);
+          details.textContent = `现金 ${provider.cashBalance || "0"} · 信控 ${provider.creditAmount || "0"} · 不含资源包与免费额度`;
+        } else {
+          main.innerHTML = formatBalance(provider.availableBalance, provider.currency);
+          details.textContent = `现金 ${provider.cashBalance || "0"} · 冻结 ${provider.freezeAmount || "0"} · 不含语音资源包余量`;
+        }
+      }
+
+      function renderCustomBalances(providers) {
+        $$("[data-custom-balance]").forEach(card => card.remove());
+        const grid = $("#balance-grid");
+        (providers || []).forEach(provider => {
+          const card = document.createElement("article");
+          card.className = "balance-card";
+          card.dataset.customBalance = provider.id || "";
+          card.innerHTML = `
+            <header>
+              <div><h3>${escapeHtml(provider.name || "自定义 API")}</h3><p class="provider-meta">自定义余额接口</p></div>
+              <span class="status-pill provider-state"><span class="status-dot"></span><span>读取中</span></span>
+            </header>
+            <div class="balance-main">--</div>
+            <p class="balance-details"></p>`;
+          grid.appendChild(card);
+          const main = $(".balance-main", card);
+          const details = $(".balance-details", card);
+          if (provider.status !== "ok") {
+            setProviderState(card, "error", provider.status === "auth_error" ? "认证失败" : "查询失败");
+            details.textContent = provider.status === "auth_error"
+              ? "请检查自定义认证请求头。"
+              : "接口、网络或 JSON 路径无效。";
+            return;
+          }
+          setProviderState(card, "online", "可用");
+          main.innerHTML = formatBalance(provider.amount, provider.currency || "");
+          details.textContent = provider.detail || "接口已返回余额。";
+        });
+      }
+
+      async function loadBalances(force = false) {
+        const button = $("#refresh-balances");
+        button.disabled = true;
+        try {
+          const data = await getJson(`/api/balances${force ? "?refresh=1" : ""}`);
+          renderProvider("deepseek-balance", data.deepseek, "deepseek");
+          renderProvider("volcengine-balance", data.volcengine, "volcengine");
+          renderProvider("bailian-balance", data.bailian, "bailian");
+          renderCustomBalances(data.custom);
+          const updated = new Date((data.timestamp || Date.now() / 1000) * 1000);
+          $("#balance-updated").textContent = `更新于 ${updated.toLocaleTimeString("zh-CN", { hour12: false })} · 服务端缓存 ${data.cacheSeconds || 300} 秒`;
+        } catch (error) {
+          ["deepseek-balance", "volcengine-balance", "bailian-balance"].forEach(id => {
+            const card = $(`#${id}`);
+            setProviderState(card, "error", "查询失败");
+            $(".balance-main", card).textContent = "--";
+            $(".balance-details", card).textContent = `余额服务异常：${error.message}`;
+          });
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      function customProviderForm(provider = {}) {
+        const configured = provider.credentialConfigured
+          ? "已保存认证值，留空将保留"
+          : "可留空，适用于无需认证的接口";
+        const wrapper = document.createElement("div");
+        wrapper.className = "custom-provider-form";
+        wrapper.dataset.providerId = provider.id || "";
+        wrapper.innerHTML = `
+          <div class="custom-provider-title">
+            <strong>${escapeHtml(provider.name || "新自定义余额卡片")}</strong>
+            <button type="button" class="danger-link remove-custom-provider">删除</button>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label>卡片名称</label>
+              <input data-field="name" required maxlength="80" value="${escapeHtml(provider.name || "")}" placeholder="例如 OpenAI">
+            </div>
+            <div class="field">
+              <label>认证请求头名称</label>
+              <input data-field="headerName" maxlength="64" value="${escapeHtml(provider.headerName || "")}" placeholder="例如 Authorization">
+            </div>
+            <div class="field full">
+              <label>余额接口 URL</label>
+              <input data-field="endpoint" type="url" required maxlength="2048" pattern="https://.*" value="${escapeHtml(provider.endpoint || "")}" placeholder="https://api.example.com/account/balance">
+              <small>仅允许公网 HTTPS 地址，不跟随重定向。</small>
+            </div>
+            <div class="field full">
+              <label>认证请求头值</label>
+              <input data-field="headerValue" type="${state.providerSecretsVisible ? "text" : "password"}" maxlength="2048" autocomplete="off" value="${escapeHtml(provider.headerValue || "")}" placeholder="例如 Bearer sk-...">
+              <small>${configured}</small>
+            </div>
+            <div class="field">
+              <label>金额 JSON 路径</label>
+              <input data-field="amountPath" required maxlength="256" value="${escapeHtml(provider.amountPath || "")}" placeholder="data.balance">
+            </div>
+            <div class="field">
+              <label>币种 JSON 路径</label>
+              <input data-field="currencyPath" maxlength="256" value="${escapeHtml(provider.currencyPath || "")}" placeholder="data.currency">
+            </div>
+            <div class="field">
+              <label>说明 JSON 路径</label>
+              <input data-field="detailPath" maxlength="256" value="${escapeHtml(provider.detailPath || "")}" placeholder="data.description">
+            </div>
+            <label class="inline-check"><input data-field="enabled" type="checkbox" ${provider.enabled === false ? "" : "checked"}>启用余额查询</label>
+            <label class="inline-check"><input data-field="clearHeaderValue" type="checkbox">清除已保存的认证值</label>
+          </div>`;
+        $("[data-field=name]", wrapper).addEventListener("input", event => {
+          $("strong", wrapper).textContent = event.target.value.trim() || "新自定义余额卡片";
+        });
+        return wrapper;
+      }
+
+      function renderProviderConfig(config) {
+        state.providerConfig = config;
+        $("#deepseek-config-state").textContent = config.deepseek?.configured ? "已配置" : "未配置";
+        $("#volcengine-config-state").textContent = config.volcengine?.configured ? "已配置" : "未配置";
+        $("#bailian-config-state").textContent = config.bailian?.configured ? "已配置" : "未配置";
+        $("#deepseek-api-key").value = config.deepseek?.apiKey || "";
+        $("#volc-access-key").value = config.volcengine?.accessKeyId || "";
+        $("#volc-secret-key").value = config.volcengine?.secretAccessKey || "";
+        $("#bailian-access-key").value = config.bailian?.accessKeyId || "";
+        $("#bailian-secret-key").value = config.bailian?.accessKeySecret || "";
+        $$(
+          "#deepseek-api-key, #volc-access-key, #volc-secret-key, #bailian-access-key, #bailian-secret-key"
+        ).forEach(input => { input.type = state.providerSecretsVisible ? "text" : "password"; });
+        $("#toggle-provider-secrets").textContent = state.providerSecretsVisible ? "隐藏密钥" : "显示密钥";
+        $("#deepseek-clear").checked = false;
+        $("#volc-clear").checked = false;
+        $("#bailian-clear").checked = false;
+        const list = $("#custom-provider-list");
+        list.replaceChildren(...(config.custom || []).map(customProviderForm));
+        $("#add-custom-provider").disabled = (config.custom || []).length >= (config.limits?.customProviders || 8);
+      }
+
+      async function openBalanceConfig() {
+        const dialog = $("#balance-config-dialog");
+        const message = $("#balance-config-message");
+        state.providerSecretsVisible = false;
+        message.className = "form-message";
+        message.textContent = "正在读取配置…";
+        dialog.showModal();
+        try {
+          renderProviderConfig(await getJson("/api/provider-config"));
+          message.textContent = "留空的密钥字段会保留服务器上的现有值。";
+        } catch (error) {
+          message.className = "form-message error";
+          message.textContent = `配置读取失败：${error.message}`;
+        }
+      }
+
+      async function toggleProviderSecrets() {
+        const button = $("#toggle-provider-secrets");
+        const message = $("#balance-config-message");
+        if (state.providerSecretsVisible) {
+          state.providerSecretsVisible = false;
+          $$(
+            "#deepseek-api-key, #volc-access-key, #volc-secret-key, #bailian-access-key, #bailian-secret-key, [data-field=headerValue]"
+          ).forEach(input => { input.type = "password"; });
+          button.textContent = "显示密钥";
+          return;
+        }
+        button.disabled = true;
+        message.className = "form-message";
+        message.textContent = "正在读取已保存的密钥…";
+        try {
+          const config = await getJson(
+            "/api/provider-config?reveal=1",
+            { "X-Bot-Manager-Request": "provider-config-reveal" }
+          );
+          state.providerSecretsVisible = true;
+          renderProviderConfig(config);
+          message.textContent = "密钥仅在此窗口临时显示，关闭后会从页面清除。";
+        } catch (error) {
+          message.className = "form-message error";
+          message.textContent = `密钥读取失败：${error.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      function clearProviderSecrets() {
+        state.providerSecretsVisible = false;
+        $$(
+          "#deepseek-api-key, #volc-access-key, #volc-secret-key, #bailian-access-key, #bailian-secret-key, [data-field=headerValue]"
+        ).forEach(input => {
+          input.value = "";
+          input.type = "password";
+        });
+        $("#toggle-provider-secrets").textContent = "显示密钥";
+      }
+
+      function collectProviderConfig() {
+        const custom = $$(".custom-provider-form").map(form => ({
+          id: form.dataset.providerId || "",
+          name: $("[data-field=name]", form).value,
+          endpoint: $("[data-field=endpoint]", form).value,
+          headerName: $("[data-field=headerName]", form).value,
+          headerValue: $("[data-field=headerValue]", form).value,
+          amountPath: $("[data-field=amountPath]", form).value,
+          currencyPath: $("[data-field=currencyPath]", form).value,
+          detailPath: $("[data-field=detailPath]", form).value,
+          enabled: $("[data-field=enabled]", form).checked,
+          clearHeaderValue: $("[data-field=clearHeaderValue]", form).checked
+        }));
+        return {
+          deepseek: {
+            apiKey: $("#deepseek-api-key").value,
+            clearApiKey: $("#deepseek-clear").checked
+          },
+          volcengine: {
+            accessKeyId: $("#volc-access-key").value,
+            secretAccessKey: $("#volc-secret-key").value,
+            clearAccessKeyId: $("#volc-clear").checked,
+            clearSecretAccessKey: $("#volc-clear").checked
+          },
+          bailian: {
+            accessKeyId: $("#bailian-access-key").value,
+            accessKeySecret: $("#bailian-secret-key").value,
+            clearAccessKeyId: $("#bailian-clear").checked,
+            clearAccessKeySecret: $("#bailian-clear").checked
+          },
+          custom
+        };
+      }
+
+      async function saveProviderConfig(event) {
+        event.preventDefault();
+        const form = $("#balance-config-form");
+        if (!form.reportValidity()) return;
+        const payload = collectProviderConfig();
+        const previousIds = new Set((state.providerConfig?.custom || []).map(item => item.id));
+        payload.custom.forEach(item => previousIds.delete(item.id));
+        if (previousIds.size && !window.confirm(`将删除 ${previousIds.size} 个自定义余额配置，是否继续？`)) return;
+        const button = $("#save-balance-config");
+        const message = $("#balance-config-message");
+        button.disabled = true;
+        message.className = "form-message";
+        message.textContent = "正在校验并保存…";
+        try {
+          const config = await postJson("/api/provider-config", payload);
+          if (state.providerSecretsVisible) {
+            renderProviderConfig(await getJson(
+              "/api/provider-config?reveal=1",
+              { "X-Bot-Manager-Request": "provider-config-reveal" }
+            ));
+          } else {
+            renderProviderConfig(config);
+          }
+          message.className = "form-message success";
+          message.textContent = "配置已保存，页面中的配置值已更新。";
+          await loadBalances(true);
+        } catch (error) {
+          message.className = "form-message error";
+          message.textContent = `保存失败：${error.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      function renderStatus(data) {
+        state.status = data;
+        const serviceMap = Object.fromEntries((data.services || []).map(service => [service.id, service]));
+        setServiceState("astrbot", Boolean(serviceMap.astrbot?.online));
+        setServiceState("snowluma", Boolean(serviceMap.flowluma?.online || serviceMap.snowluma?.online));
+        setServiceState("novnc", Boolean(serviceMap.novnc?.online));
+
+        const server = data.server || {};
+        updateMetric("cpu", 0, 0, server.cpuPercent);
+        updateMetric("memory", server.memory?.used, server.memory?.total);
+        updateMetric("disk", server.disk?.used, server.disk?.total);
+        $("#hostname").textContent = server.hostname || "--";
+        $("#uptime").textContent = formatUptime(server.uptimeSeconds);
+        $("#os-name").textContent = server.os || "--";
+        $("#os-name").title = `${server.os || ""} ${server.kernel || ""}`.trim();
+        $("#load-average").textContent = (server.load || []).join(" / ") || "--";
+        $("#server-health").textContent = `${formatBytes(server.memory?.used)} / ${formatBytes(server.memory?.total)} 内存`;
+
+        const updated = data.timestamp ? new Date(data.timestamp * 1000) : new Date();
+        $("#last-updated").className = "status-pill online";
+        $("#last-updated span:last-child").textContent = `更新于 ${updated.toLocaleTimeString("zh-CN", { hour12: false })}`;
+        setConnection("online", "SSH 已连接");
+        showError("");
+        renderBots(data);
+      }
+
+      function renderBots(data) {
+        const containers = data.containers || [];
+        const rows = containers.map(item => `
+          <tr>
+            <td><strong>${escapeHtml(item.name)}</strong></td>
+            <td>${escapeHtml(item.image || "--")}</td>
+            <td><span class="state-text ${item.state === "running" ? "running" : ""}">${escapeHtml(item.status || item.state || "未知")}</span></td>
+            <td>${escapeHtml(item.cpu || "--")}</td>
+            <td>${escapeHtml(item.memory || "--")}</td>
+          </tr>`).join("");
+        const login = data.bots?.onebot;
+        const platforms = data.bots?.platforms || [];
+        $("#bot-summary").textContent = login
+          ? `QQ ${login.nickname} (${login.userId}) · ${containers.length} 个相关容器`
+          : `${containers.length} 个相关容器 · ${platforms.length} 个平台配置`;
+        $("#bot-table").innerHTML = rows || '<tr><td colspan="5"><div class="empty">未发现相关 Docker 容器。</div></td></tr>';
+      }
+
+      async function refreshStatus() {
+        const button = $("#refresh-button");
+        button.disabled = true;
+        setConnection("", "正在连接");
+        try {
+          renderStatus(await getJson("/api/status"));
+        } catch (error) {
+          setConnection("error", "连接异常");
+          showError(`无法读取服务器状态：${error.message}`);
+          ["astrbot", "snowluma", "novnc"].forEach(id => setServiceState(id, false));
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      function formatInteger(value) {
+        return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(Number(value) || 0);
+      }
+
+      function formatMoney(value) {
+        return `¥${Number(value || 0).toLocaleString("zh-CN", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 6
+        })}`;
+      }
+
+      function formatAmounts(item) {
+        const amount = item?.knownAmounts?.CNY;
+        return amount == null ? "待配置人民币价" : formatMoney(amount, "CNY");
+      }
+
+      function formatDuration(value) {
+        const milliseconds = Number(value);
+        if (!Number.isFinite(milliseconds)) return "--";
+        return milliseconds >= 1000
+          ? `${(milliseconds / 1000).toFixed(milliseconds >= 10000 ? 1 : 2)} 秒`
+          : `${Math.round(milliseconds)} ms`;
+      }
+
+      function pluginLabel(value) {
+        if (value === "shared_chat") return "主对话（共享）";
+        if (value === "unattributed") return "对话消费";
+        return String(value || "未知").replace(/^astrbot_plugin_/, "");
+      }
+
+      function usageQuery(includePagination = true) {
+        const params = new URLSearchParams({
+          range: $("#usage-range").value
+        });
+        if (includePagination) {
+          params.set("limit", "100");
+          params.set("offset", String(state.usageOffset));
+        }
+        [
+          ["plugin_id", $("#usage-plugin").value],
+          ["model", $("#usage-model").value],
+          ["status", $("#usage-status").value]
+        ].forEach(([key, value]) => {
+          if (value) params.set(key, value);
+        });
+        return params;
+      }
+
+      function addUsageOptions(select, values, label = value => value) {
+        const known = new Set(Array.from(select.options).map(option => option.value));
+        (values || []).forEach(value => {
+          if (known.has(value)) return;
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label(value);
+          select.appendChild(option);
+          known.add(value);
+        });
+      }
+
+      function drawPluginChart() {
+        const canvas = $("#usage-plugin-chart");
+        if (state.usageView === "table" || !state.usage) return;
+        const wrapper = canvas.parentElement;
+        const rect = wrapper.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const ratio = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.round(rect.width * ratio);
+        canvas.height = Math.round(rect.height * ratio);
+        const context = canvas.getContext("2d");
+        context.scale(ratio, ratio);
+        const width = rect.width;
+        const height = rect.height;
+        const items = (state.usage.byPlugin || []).slice(0, 14);
+        const values = items.map(item => Number(item.knownAmounts?.CNY || 0));
+        const maximum = Math.max(...values, 0.01);
+        const padding = { top: 24, right: 18, bottom: 74, left: 58 };
+        const plotWidth = width - padding.left - padding.right;
+        const plotHeight = height - padding.top - padding.bottom;
+        context.clearRect(0, 0, width, height);
+        context.font = '11px "Segoe UI", "Microsoft YaHei UI", sans-serif';
+        context.textBaseline = "middle";
+        context.strokeStyle = "#e2e8e5";
+        context.fillStyle = "#68756f";
+        context.lineWidth = 1;
+        for (let index = 0; index <= 4; index += 1) {
+          const y = padding.top + plotHeight * index / 4;
+          context.beginPath();
+          context.moveTo(padding.left, y);
+          context.lineTo(width - padding.right, y);
+          context.stroke();
+          context.textAlign = "right";
+          const tick = maximum * (1 - index / 4);
+          context.fillText(config.tokenAxis ? formatInteger(Math.round(tick)) : `¥${tick.toFixed(2)}`, padding.left - 8, y);
+        }
+        if (!items.length) {
+          context.textAlign = "center";
+          context.fillText("当前筛选范围没有插件用量", width / 2, height / 2);
+          return;
+        }
+        const slot = plotWidth / items.length;
+        const points = [];
+        items.forEach((item, index) => {
+          const value = values[index];
+          const x = padding.left + slot * (index + 0.5);
+          const y = padding.top + plotHeight * (1 - value / maximum);
+          points.push([x, y]);
+          if (state.usageView === "bar") {
+            const barWidth = Math.max(8, Math.min(42, slot * 0.58));
+            context.fillStyle = "#087e6a";
+            context.fillRect(x - barWidth / 2, y, barWidth, padding.top + plotHeight - y);
+          }
+          context.save();
+          context.translate(x, padding.top + plotHeight + 10);
+          context.rotate(-Math.PI / 4);
+          context.textAlign = "right";
+          context.fillStyle = "#68756f";
+          const label = pluginLabel(item.key);
+          context.fillText(label.length > 15 ? `${label.slice(0, 14)}…` : label, 0, 0);
+          context.restore();
+        });
+        if (state.usageView === "line") {
+          context.strokeStyle = "#087e6a";
+          context.lineWidth = 2;
+          context.beginPath();
+          points.forEach(([x, y], index) => index ? context.lineTo(x, y) : context.moveTo(x, y));
+          context.stroke();
+          points.forEach(([x, y]) => {
+            context.beginPath();
+            context.arc(x, y, 4, 0, Math.PI * 2);
+            context.fillStyle = "#ffffff";
+            context.fill();
+            context.strokeStyle = "#087e6a";
+            context.stroke();
+          });
+        }
+        canvas.setAttribute(
+          "aria-label",
+          `按插件估算费用${state.usageView === "bar" ? "柱状图" : "折线图"}，显示 ${items.length} 个插件`
+        );
+      }
+
+      const BAR_ACTUAL = "#087e6a";
+      const BAR_ESTIMATE = "#9ad8ca";
+
+      function drawBars(config) {
+        const canvas = $(config.canvasId);
+        if (!canvas) return;
+        const wrapper = canvas.parentElement;
+        const rect = wrapper.getBoundingClientRect();
+        const items = (config.items || []).slice();
+        if (!rect.width || !rect.height) {
+          state[config.slotsKey] = [];
+          return;
+        }
+        const ratio = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.round(rect.width * ratio);
+        canvas.height = Math.round(rect.height * ratio);
+        const context = canvas.getContext("2d");
+        context.scale(ratio, ratio);
+        const width = rect.width;
+        const height = rect.height;
+        const padding = { top: 26, right: 16, bottom: 34, left: 56 };
+        const plotWidth = width - padding.left - padding.right;
+        const plotHeight = height - padding.top - padding.bottom;
+        context.clearRect(0, 0, width, height);
+        context.font = '11px "Segoe UI", "Microsoft YaHei UI", sans-serif';
+        context.textBaseline = "middle";
+        if (!items.length) {
+          context.fillStyle = "#68756f";
+          context.textAlign = "center";
+          context.fillText(config.emptyText || "当前范围没有数据", width / 2, height / 2);
+          state[config.slotsKey] = [];
+          return;
+        }
+        const valuesOf = pick => items.map(item => {
+          if (!pick) return 0;
+          const value = pick(item);
+          return value == null || !Number.isFinite(Number(value)) ? 0 : Number(value);
+        });
+        const primaries = valuesOf(config.primary);
+        const secondaries = config.secondary ? valuesOf(config.secondary) : null;
+        const maximum = Math.max(...primaries, ...(secondaries || []), 0.01) * 1.15;
+        context.strokeStyle = "#e2e8e5";
+        context.fillStyle = "#68756f";
+        context.lineWidth = 1;
+        for (let index = 0; index <= 4; index += 1) {
+          const y = padding.top + plotHeight * index / 4;
+          context.beginPath();
+          context.moveTo(padding.left, y);
+          context.lineTo(width - padding.right, y);
+          context.stroke();
+          context.textAlign = "right";
+          context.fillText(`¥${(maximum * (1 - index / 4)).toFixed(2)}`, padding.left - 8, y);
+        }
+        const slotWidth = plotWidth / items.length;
+        const barWidth = Math.max(
+          4,
+          Math.min(config.maxBarWidth || 16, slotWidth * (secondaries ? 0.32 : 0.5))
+        );
+        const baseline = padding.top + plotHeight;
+        const slots = [];
+        const labelStep = Math.max(1, Math.ceil(items.length / 12));
+        items.forEach((item, index) => {
+          const centerX = padding.left + slotWidth * (index + 0.5);
+          const bars = [];
+          if (secondaries) {
+            bars.push({ value: primaries[index], color: BAR_ACTUAL, x: centerX - barWidth - 1 });
+            bars.push({ value: secondaries[index], color: BAR_ESTIMATE, x: centerX + 1 });
+          } else {
+            bars.push({ value: primaries[index], color: BAR_ACTUAL, x: centerX - barWidth / 2 });
+          }
+          let topY = baseline;
+          for (const bar of bars) {
+            if (bar.value <= 0) continue;
+            const barY = baseline - plotHeight * (bar.value / maximum);
+            context.fillStyle = bar.color;
+            context.fillRect(bar.x, barY, barWidth, baseline - barY);
+            topY = Math.min(topY, barY);
+          }
+          slots.push({
+            x0: padding.left + slotWidth * index,
+            x1: padding.left + slotWidth * (index + 1),
+            centerX,
+            topY,
+            item
+          });
+          if (index % labelStep === 0 || index === items.length - 1) {
+            context.fillStyle = "#68756f";
+            context.textAlign = "center";
+            context.fillText(config.label ? config.label(item) : "", centerX, baseline + 14);
+          }
+        });
+        context.textAlign = "left";
+        context.fillStyle = BAR_ACTUAL;
+        context.fillRect(padding.left, 9, 10, 10);
+        context.fillStyle = "#68756f";
+        context.fillText(config.primaryLabel || "金额", padding.left + 14, 14);
+        if (secondaries) {
+          context.fillStyle = BAR_ESTIMATE;
+          context.fillRect(padding.left + 84, 9, 10, 10);
+          context.fillStyle = "#68756f";
+          context.fillText(config.secondaryLabel || "对比", padding.left + 98, 14);
+        }
+        state[config.slotsKey] = slots;
+        canvas.setAttribute(
+          "aria-label",
+          config.aria ? config.aria(items.length) : `柱状图，共 ${items.length} 项`
+        );
+      }
+
+      function hourlyTooltipHtml(item) {
+        const consumed = item.balanceConsumed;
+        const estimate = Number(item.accountAmountCny ?? item.amountCny ?? 0);
+        const rows = [
+          ["调用", `${formatInteger(item.calls)} 次`],
+          ["Token", formatInteger(item.totalTokens)],
+          ["余额实测", consumed == null ? "—" : `¥${consumed}`],
+          [consumed == null ? "已核算金额" : "DeepSeek 全连接估算", `¥${estimate.toFixed(3)}`]
+        ];
+        if (consumed != null) {
+          const delta = estimate - Number(consumed);
+          rows.push(["差额", `${delta >= 0 ? "+" : ""}${delta.toFixed(2)} 元`]);
+        }
+        if (item.unattributed) rows.push(["其中无记录", `¥${item.unattributed}`]);
+        if (item.missingPriceCalls) rows.push(["待配置单价", `${item.missingPriceCalls} 次`]);
+        if (item.unknownUsageCalls) rows.push(["用量未完整返回", `${item.unknownUsageCalls} 次`]);
+        return `<strong>${escapeHtml(item.hour || item.key)}</strong>` +
+          rows.map(([label, value]) => `<span>${label}<b>${value}</b></span>`).join("");
+      }
+
+      function dailyTooltipHtml(item) {
+        const estimate = Number(item.knownAmountCny || 0);
+        const rows = [
+          ["调用", `${formatInteger(item.calls)} 次`],
+          ["Token", formatInteger(item.totalTokens)],
+          ["估算费用", `¥${estimate.toFixed(3)}`],
+          ["p95 延迟", formatDuration(item.latencyP95Ms)],
+          ["失败", `${formatInteger(item.failedCalls)} 次`]
+        ];
+        if (item.missingPriceCalls) {
+          rows.push(["待配置单价", `${formatInteger(item.missingPriceCalls)} 次`]);
+        }
+        if (item.unknownUsageCalls) {
+          rows.push(["用量未完整返回", `${formatInteger(item.unknownUsageCalls)} 次`]);
+        }
+        return `<strong>${escapeHtml(item.key)}</strong>` +
+          rows.map(([label, value]) => `<span>${label}<b>${value}</b></span>`).join("");
+      }
+
+      function drawHourlyChart() {
+        if (!state.usage) return;
+        const compareBalance = Boolean(state.usage.balance?.available);
+        drawBars({
+          canvasId: "#usage-hour-chart",
+          slotsKey: "hourlySlots",
+          items: (state.usage.byHour || []).slice().reverse(),
+          primary: item => compareBalance ? item.balanceConsumed : Number(item.totalTokens || 0),
+          primaryLabel: compareBalance ? "账户余额实测" : "Token 用量",
+          secondary: compareBalance ? item => Number(item.accountAmountCny || 0) : null,
+          secondaryLabel: "账户估算",
+          tokenAxis: !compareBalance,
+          label: item => String(item.hour || "").slice(0, 2),
+          emptyText: "当前范围没有小时数据",
+          aria: count => `按小时${compareBalance ? "DeepSeek 账户消费" : "Token 用量"}柱状图，共 ${count} 个小时`
+        });
+      }
+
+      function drawDailyChart() {
+        if (!state.usage) return;
+        drawBars({
+          canvasId: "#usage-day-chart",
+          slotsKey: "dailySlots",
+          items: (state.usage.byDay || []).slice().reverse(),
+          primary: item => Number(item.totalTokens || 0),
+          primaryLabel: "Token 用量",
+          tokenAxis: true,
+          secondary: null,
+          maxBarWidth: 64,
+          label: item => String(item.key || "").slice(5),
+          emptyText: "当前范围没有每日数据",
+          aria: count => `按日消费柱状图，共 ${count} 天`
+        });
+      }
+
+      function bindBarHover(canvasId, tooltipId, slotsKey, render) {
+        const canvas = $(canvasId);
+        const tooltip = $(tooltipId);
+        if (!canvas || !tooltip) return;
+        canvas.addEventListener("mousemove", event => {
+          const slots = state[slotsKey] || [];
+          if (!slots.length) return;
+          const rect = canvas.getBoundingClientRect();
+          const offsetX = event.clientX - rect.left;
+          const slot = slots.find(entry => offsetX >= entry.x0 && offsetX < entry.x1);
+          if (!slot) {
+            tooltip.hidden = true;
+            return;
+          }
+          tooltip.innerHTML = render(slot.item);
+          tooltip.hidden = false;
+          const boundWidth = canvas.parentElement.getBoundingClientRect().width;
+          tooltip.style.left = `${Math.min(Math.max(slot.centerX, 100), Math.max(100, boundWidth - 100))}px`;
+          tooltip.style.top = `${Math.max(slot.topY - 10, 148)}px`;
+        });
+        canvas.addEventListener("mouseleave", () => {
+          tooltip.hidden = true;
+        });
+      }
+
+      function bindHourlyHover() {
+        bindBarHover("#usage-hour-chart", "#usage-hour-tooltip", "hourlySlots", hourlyTooltipHtml);
+        bindBarHover("#usage-day-chart", "#usage-day-tooltip", "dailySlots", dailyTooltipHtml);
+      }
+
+      function setUsageView(mode) {
+        state.usageView = mode;
+        $$("[data-usage-view]").forEach(button => {
+          button.setAttribute("aria-pressed", String(button.dataset.usageView === mode));
+        });
+        $("#usage-plugin-table-wrap").hidden = mode !== "table";
+        $("#usage-plugin-chart-wrap").hidden = mode === "table";
+        if (mode !== "table") window.requestAnimationFrame(drawPluginChart);
+      }
+
+      function setUsageGranularity(mode) {
+        state.usageGranularity = mode;
+        $$("[data-usage-granularity]").forEach(button => {
+          button.setAttribute(
+            "aria-pressed",
+            String(button.dataset.usageGranularity === mode)
+          );
+        });
+        if (state.usage) renderUsage(state.usage);
+      }
+
+      function usageGroupAmount(item) {
+        const amount = item.pricedCalls ? formatAmounts(item) : '<span class="table-status warn">费用待确认</span>';
+        const unknown = Number(item.unknownUsageCalls) || 0;
+        const pending = Number(item.missingPriceCalls) || 0;
+        return amount +
+          (unknown ? `<br><small>${formatInteger(unknown)} 次用量未完整返回</small>` : "") +
+          (pending ? `<br><small>${formatInteger(pending)} 次待配置单价</small>` : "");
+      }
+
+      function renderUsage(data) {
+        state.usage = data;
+        const summary = data.summary || {};
+        $("#usage-calls").textContent = formatInteger(summary.calls);
+        $("#usage-failures").textContent = `${formatInteger(summary.failedCalls)} 次失败或未完成`;
+        $("#usage-tokens").textContent = formatInteger(summary.totalTokens);
+        const usageFreeCalls = Number(summary.freeCalls) || 0;
+        const usageFreeTokens = Number(summary.freeTokens) || 0;
+        const usageTokenDetail =
+          `${formatInteger(summary.inputOther)} / ${formatInteger(summary.inputCached)} / ${formatInteger(summary.output)}`;
+        const usageTokenSplit = $("#usage-token-split");
+        usageTokenSplit.title = `普通 / 缓存 / 输出：${usageTokenDetail}`;
+        usageTokenSplit.textContent = usageFreeCalls
+          ? `计费 ${formatInteger(summary.billedTokens)} · 免费 ${formatInteger(usageFreeTokens)}`
+          : usageTokenDetail;
+        $("#usage-amount").textContent = summary.pricedCalls
+          ? formatAmounts(summary)
+          : "费用待确认";
+        const usageBalance = data.balance || {};
+        let usageNote;
+        if (usageBalance.available && usageBalance.consumed != null) {
+          const usageDelta = Number(usageBalance.accountEstimateCny || 0) - Number(usageBalance.consumed);
+          usageNote = `DeepSeek 账户全连接实测 ¥${usageBalance.consumed}（账户估算 ${usageDelta >= 0 ? "+" : ""}${usageDelta.toFixed(2)}）`;
+          if (Number(usageBalance.unattributed) > 0) {
+            usageNote += ` · 无记录扣费 ¥${usageBalance.unattributed}`;
+          }
+          if (usageFreeCalls) usageNote += `；免费 ${formatInteger(usageFreeCalls)} 次`;
+        } else if (summary.unknownUsageCalls) {
+          usageNote = "估算仅包含已返回的用量";
+        } else if (summary.missingPriceCalls) {
+          usageNote = "估算仅包含已配置价格的用量";
+        } else if (usageFreeCalls) {
+          usageNote = `仅计费调用；免费 ${formatInteger(usageFreeCalls)} 次（${formatInteger(usageFreeTokens)} Token）不计入`;
+        } else {
+          usageNote = `${formatInteger(summary.pricedCalls)} 次调用已按配置单价估算`;
+        }
+        // 独立提示缺失用量，余额可用时也不隐藏；未知不能当作零费用。
+        if (summary.unknownUsageCalls) {
+          usageNote += ` · ${formatInteger(summary.unknownUsageCalls)} 次用量未完整返回，实际费用待确认`;
+        }
+        if (summary.missingPriceCalls) {
+          usageNote += ` · ${formatInteger(summary.missingPriceCalls)} 次调用待配置单价`;
+        }
+        if (summary.requestAttempts) {
+          usageNote += ` · 已采集 ${formatInteger(summary.requestAttempts)} 次供应商请求尝试`;
+        }
+        // DeepSeek 的联网搜索按次收费、不消耗 token，单独挂一行才解释得通金额差
+        const usageSearch = data.search || {};
+        if (Number(usageSearch.total) > 0) {
+          usageNote += ` · 联网搜索 ${formatInteger(usageSearch.total)} 次 ¥${Number(usageSearch.amountCny || 0).toFixed(3)}`;
+        }
+        $("#usage-unpriced").textContent = usageNote;
+        $("#usage-latency").textContent = formatDuration(summary.latencyP95Ms);
+        $("#usage-ttft").textContent = `TTFT p95 ${formatDuration(summary.ttftP95Ms)}`;
+
+        addUsageOptions($("#usage-plugin"), data.options?.plugins, pluginLabel);
+        addUsageOptions($("#usage-model"), data.options?.models);
+        addUsageOptions($("#usage-status"), data.options?.statuses);
+
+        const rangeLabels = {
+          today: "今日（实时）",
+          yesterday: "昨日",
+          "24h": "最近 24 小时",
+          "7d": "最近 7 日",
+          "30d": "最近 30 日",
+          all: "全部记录"
+        };
+        $("#usage-period").textContent =
+          `${rangeLabels[data.range] || data.range} · ${formatInteger(summary.calls)} 次调用`;
+        const usageGranularity = state.usageGranularity || "day";
+        const usageDayHead = $("#usage-day-head");
+        const usageDayBody = $("#usage-day-table");
+        if (usageGranularity === "hour") {
+          const hourlyRanges = ["today", "yesterday", "24h"];
+          const hourSupported = hourlyRanges.includes(data.range);
+          $("#usage-day-title").textContent = data.balance?.available ? "DeepSeek 账户每小时消费" : "每小时模型用量";
+          $("#usage-day-table-wrap").hidden = true;
+          $("#usage-day-chart-wrap").hidden = true;
+          $("#usage-day-tooltip").hidden = true;
+          $("#usage-hour-chart-wrap").hidden = !hourSupported;
+          $("#usage-hour-unsupported").hidden = hourSupported;
+          $("#usage-hour-tooltip").hidden = true;
+          if (hourSupported) {
+            const hasBalance = (data.byHour || []).some(item => item.balanceConsumed != null);
+            $("#usage-day-note").textContent = hasBalance
+              ? "账户实测与全连接估算对比；悬停 Token 为当前筛选模型用量"
+              : "当前筛选模型的 Token 用量 · 悬停查看金额与明细";
+            window.requestAnimationFrame(drawHourlyChart);
+          } else {
+            $("#usage-day-note").textContent = "按小时仅支持今日 / 昨日 / 最近 24 小时";
+          }
+        } else {
+          $("#usage-day-table-wrap").hidden = false;
+          $("#usage-day-chart-wrap").hidden = false;
+          $("#usage-hour-chart-wrap").hidden = true;
+          $("#usage-hour-unsupported").hidden = true;
+          $("#usage-hour-tooltip").hidden = true;
+          $("#usage-day-title").textContent = "每日模型用量";
+          $("#usage-day-note").textContent = "北京时间自然日 · 非供应商账单 · 悬停柱体查看明细";
+          window.requestAnimationFrame(drawDailyChart);
+          usageDayHead.innerHTML =
+            '<tr><th>日期</th><th class="numeric">调用</th><th class="numeric">普通输入</th><th class="numeric">缓存输入</th><th class="numeric">输出</th><th class="numeric">Token 合计</th><th class="numeric">估算费用（元）</th><th class="numeric">p95 延迟</th><th class="numeric">失败</th></tr>';
+          usageDayBody.innerHTML = (data.byDay || []).map(item => `
+          <tr>
+            <td><strong>${escapeHtml(item.key)}</strong></td>
+            <td class="numeric">${formatInteger(item.calls)}</td>
+            <td class="numeric">${formatInteger(item.inputOther)}</td>
+            <td class="numeric">${formatInteger(item.inputCached)}</td>
+            <td class="numeric">${formatInteger(item.output)}</td>
+            <td class="numeric"><strong>${formatInteger(item.totalTokens)}</strong></td>
+            <td class="numeric">${usageGroupAmount(item)}</td>
+            <td class="numeric">${formatDuration(item.latencyP95Ms)}</td>
+            <td class="numeric">${formatInteger(item.failedCalls)}</td>
+          </tr>`).join("") ||
+            '<tr><td colspan="9"><div class="empty">当前筛选范围没有每日消费记录。</div></td></tr>';
+        }
+        $("#usage-plugin-table").innerHTML = (data.byPlugin || []).map(item => `
+          <tr>
+            <td><strong>${escapeHtml(pluginLabel(item.key))}</strong><br><small>${escapeHtml(item.key)}</small></td>
+            <td class="numeric">${formatInteger(item.calls)}</td>
+            <td class="numeric">${formatInteger(item.inputOther)}</td>
+            <td class="numeric">${formatInteger(item.inputCached)}</td>
+            <td class="numeric">${formatInteger(item.output)}</td>
+            <td class="numeric"><strong>${formatInteger(item.totalTokens)}</strong></td>
+            <td class="numeric">${usageGroupAmount(item)}</td>
+            <td class="numeric">${formatDuration(item.latencyP95Ms)}</td>
+            <td class="numeric">${formatInteger(item.failedCalls)}</td>
+          </tr>`).join("") ||
+          '<tr><td colspan="9"><div class="empty">当前筛选范围没有用量记录。</div></td></tr>';
+
+        $("#usage-model-table").innerHTML = (data.byModel || []).map(item => `
+          <tr>
+            <td><strong>${escapeHtml(item.key)}</strong>${item.key === "automatic" ? "<br><small>旧路由记录，实际模型未知</small>" : ""}</td>
+            <td class="numeric">${formatInteger(item.calls)}</td>
+            <td class="numeric">${formatInteger(item.inputOther)}</td>
+            <td class="numeric">${formatInteger(item.inputCached)}</td>
+            <td class="numeric">${formatInteger(item.output)}</td>
+            <td class="numeric"><strong>${formatInteger(item.totalTokens)}</strong></td>
+            <td class="numeric">${formatInteger(item.freeTokens)}</td>
+            <td class="numeric">${usageGroupAmount(item)}</td>
+          </tr>`).join("") || '<tr><td colspan="8"><div class="empty">当前筛选范围没有模型用量。</div></td></tr>';
+        $("#usage-detail-table").innerHTML = (data.details || []).map(item => {
+          const statusKind = item.status === "completed" ? "good" : "bad";
+          const price = item.price_status === "usage_unknown"
+            ? '<span class="table-status warn">用量未知 · 费用待确认</span>'
+            : item.amount == null || item.amount_currency !== "CNY"
+              ? '<span class="table-status warn">待配置单价</span>'
+              : formatMoney(item.amount, "CNY") +
+                (item.price_status === "free" ? "<br><small>免费</small>" : "") +
+                (item.free_tokens > 0 && item.price_status !== "free" ? `<br><small>额度抵扣 ${formatInteger(item.free_tokens)} Token</small>` : "") +
+                (item.price_status === "partial_usage" ? "<br><small>已知部分；其余待确认</small>" : "");
+          const requestCount = (item.request_details || []).length;
+          const actualModels = [...new Set((item.request_details || []).map(r => r.model).filter(Boolean))];
+          const modelLabel = actualModels.length ? actualModels.join(" / ") : item.model === "automatic" ? "automatic（实际模型未知）" : item.model;
+          const attempts = requestCount ? `<br><small>${formatInteger(requestCount)} 次请求尝试${item.unknown_requests ? `，${formatInteger(item.unknown_requests)} 次用量未知` : ""}</small>` : "";
+          return `
+            <tr>
+              <td>${escapeHtml(new Date(item.started_at * 1000).toLocaleString("zh-CN", { hour12: false }))}</td>
+              <td><strong>${escapeHtml(pluginLabel(item.plugin_id))}</strong>${item.historical ? '<br><small>历史数据</small>' : ""}</td>
+              <td class="route-cell" title="${escapeHtml(item.route)}">${escapeHtml(item.route)}</td>
+              <td>${escapeHtml(modelLabel)}<br><small>${escapeHtml(item.provider_id)} · ${item.call_kind === "embedding" ? "向量化" : "对话"}</small></td>
+              <td class="numeric"><strong>${formatInteger(item.total_tokens)}</strong><br><small>${formatInteger(item.token_input_other)} / ${formatInteger(item.token_input_cached)} / ${formatInteger(item.token_output)}</small></td>
+              <td class="numeric">${price}</td>
+              <td class="numeric">${formatDuration(item.latency_ms)}${item.ttft_ms == null ? "" : `<br><small>TTFT ${formatDuration(item.ttft_ms)}</small>`}</td>
+              <td><span class="table-status ${statusKind}">${escapeHtml(item.status)}</span><br><small>${escapeHtml(item.source)}</small>${attempts}</td>
+            </tr>`;
+        }).join("") ||
+          '<tr><td colspan="8"><div class="empty">当前筛选范围没有调用明细。</div></td></tr>';
+        $("#usage-detail-count").textContent =
+          `显示第 ${formatInteger((data.pagination?.offset || 0) + 1)}–${formatInteger((data.pagination?.offset || 0) + (data.details?.length || 0))} 条，共可浏览 ${formatInteger(data.pagination?.total)} 条${data.pagination?.capped ? `（全部 ${formatInteger(data.pagination?.availableTotal)} 条，页面上限 1000）` : ""}`;
+        const pageSize = Number(data.pagination?.limit) || 100;
+        const total = Number(data.pagination?.total) || 0;
+        const currentPage = total ? Math.floor((Number(data.pagination?.offset) || 0) / pageSize) + 1 : 1;
+        const pageCount = Math.max(1, Math.ceil(total / pageSize));
+        $("#usage-page-status").textContent = `第 ${currentPage} / ${pageCount} 页`;
+        $("#usage-prev-page").disabled = currentPage <= 1;
+        $("#usage-next-page").disabled = currentPage >= pageCount;
+        const installed = data.collection?.installedAt
+          ? new Date(data.collection.installedAt * 1000).toLocaleString("zh-CN", { hour12: false })
+          : "尚未启用";
+        $("#usage-quality-note").textContent =
+          `插件级采集启用时间：${installed}。记录对话、OpenAI/DashScope 向量化和 API 路由实际模型用量；跨模型重试的涉及调用数不能直接相加，Token 可相加。旧 automatic 记录保留总量，实际模型未知；此前漏采的向量化用量无法追溯。未配置单价仍显示 Token，费用待确认。取消、失败或重启可能造成用量缺口；独立插件客户端可能不在采集范围内。报表不保存提示词、回复正文或用户标识。`;
+        $("#export-usage").href = `/api/usage-export.csv?${usageQuery(false).toString()}`;
+        if (state.usageView !== "table") window.requestAnimationFrame(drawPluginChart);
+      }
+
+      async function loadUsage() {
+        const button = $("#refresh-usage");
+        button.disabled = true;
+        $("#usage-detail-count").textContent = "正在读取调用明细…";
+        try {
+          renderUsage(await getJson(`/api/usage-report?${usageQuery().toString()}`));
+        } catch (error) {
+          $("#usage-day-table").innerHTML =
+            `<tr><td colspan="9"><div class="empty">每日消费读取失败：${escapeHtml(error.message)}</div></td></tr>`;
+          $("#usage-plugin-table").innerHTML =
+            `<tr><td colspan="9"><div class="empty">报表读取失败：${escapeHtml(error.message)}</div></td></tr>`;
+          $("#usage-detail-table").innerHTML =
+            '<tr><td colspan="8"><div class="empty">无法读取调用明细。</div></td></tr>';
+          $("#usage-detail-count").textContent = "读取失败";
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      function toLocalDateTimeInput(value) {
+        const date = value ? new Date(value) : new Date();
+        const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+        return local.toISOString().slice(0, 16);
+      }
+
+      function pricingModelOptions(value) {
+        // 当前已配置模型始终可查看；新增候选只来自 automatic 的正常连接。
+        const values = new Set([
+          value, ...(state.usagePricing?.prices || [])
+            .filter(p => p.providerId !== "multi_api_router" && p.model !== "automatic").map(p => p.model),
+          ...(state.usageModels?.models || []).map(p => p.model)
+        ].filter(Boolean));
+        return '<option value="">请选择模型</option>' + Array.from(values).map(model =>
+          `<option value="${escapeHtml(model)}" ${model === value ? "selected" : ""}>${escapeHtml(model)}</option>`
+        ).join("");
+      }
+
+      function priceEntry(item = {}) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "price-entry";
+        wrapper.dataset.priceId = item.id || "";
+        const quota = (state.usage?.freeQuotas || []).find(q =>
+          q.model === item.model && (!item.providerId || q.providerId === item.providerId));
+        const freeNote = quota?.remainingTokens > 0
+          ? `额度内免费 ¥0 · 估算剩余 ${formatInteger(quota.remainingTokens)} Token`
+          : "";
+        wrapper.innerHTML = `
+          <div class="price-entry-header">
+            <div><strong>${escapeHtml(item.model || "新价格版本")}</strong>${freeNote ? `<br><small>${escapeHtml(freeNote)}</small>` : ""}</div>
+            <button type="button" class="danger-link remove-price-entry">删除</button>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label>计价模式</label>
+              <select data-price-field="pricingMode">
+                <option value="flat" ${item.pricingMode === "deepseek_peak" ? "" : "selected"}>固定单价</option>
+                <option value="deepseek_peak" ${item.pricingMode === "deepseek_peak" ? "selected" : ""}>DeepSeek 标准 / 优惠时段</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>币种</label>
+              <select data-price-field="currency">
+                <option value="CNY" selected>人民币 ¥ / CNY</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>模型</label>
+              <select data-price-field="model" required>${pricingModelOptions(item.model || $("#usage-model").value || "")}</select>
+            </div>
+            <div class="field">
+              <label>Provider ID（可选）</label>
+              <input data-price-field="providerId" maxlength="160" value="${escapeHtml(item.providerId || "")}" placeholder="留空则匹配同名模型">
+            </div>
+            <div class="field full">
+              <label>生效时间</label>
+              <input data-price-field="effectiveFrom" type="datetime-local" required value="${escapeHtml(toLocalDateTimeInput(item.effectiveFrom))}">
+            </div>
+            <div class="field full">
+              <label>同价 Provider ID（逗号分隔，可选）</label>
+              <input data-price-field="providerIds" value="${escapeHtml((item.providerIds || []).join(", "))}" placeholder="同一模型的普通 / quiet 连接共用单价">
+            </div>
+            <div class="field full">
+              <label>同价模型别名（逗号分隔，可选）</label>
+              <input data-price-field="modelAliases" value="${escapeHtml((item.modelAliases || []).join(", "))}">
+            </div>
+            <div class="field full flat-price-fields">
+              <div class="form-grid">
+                <div class="field"><label>普通输入 / 百万 Token</label><input data-price-field="inputOtherCnyPerMillion" inputmode="decimal" value="${escapeHtml(item.inputOtherCnyPerMillion || "")}" placeholder="待配置"></div>
+                <div class="field"><label>缓存输入 / 百万 Token</label><input data-price-field="inputCachedCnyPerMillion" inputmode="decimal" value="${escapeHtml(item.inputCachedCnyPerMillion || "")}" placeholder="待配置"></div>
+                <div class="field"><label>输出 / 百万 Token</label><input data-price-field="outputCnyPerMillion" inputmode="decimal" value="${escapeHtml(item.outputCnyPerMillion || "")}" placeholder="待配置"></div>
+              </div>
+            </div>
+            <div class="field full scheduled-price-fields">
+              <div class="form-grid">
+                <div class="field"><label>谷 / 优惠时段普通输入 ¥</label><input data-price-field="inputOtherOffPeakPerMillion" inputmode="decimal" value="${escapeHtml(item.inputOtherOffPeakPerMillion || "")}"></div>
+                <div class="field"><label>谷 / 优惠时段缓存输入 ¥</label><input data-price-field="inputCachedOffPeakPerMillion" inputmode="decimal" value="${escapeHtml(item.inputCachedOffPeakPerMillion || "")}"></div>
+                <div class="field"><label>谷 / 优惠时段输出 ¥</label><input data-price-field="outputOffPeakPerMillion" inputmode="decimal" value="${escapeHtml(item.outputOffPeakPerMillion || "")}"></div>
+                <div class="field"><label>峰 / 标准时段普通输入 ¥</label><input data-price-field="inputOtherPeakPerMillion" inputmode="decimal" value="${escapeHtml(item.inputOtherPeakPerMillion || "")}"></div>
+                <div class="field"><label>峰 / 标准时段缓存输入 ¥</label><input data-price-field="inputCachedPeakPerMillion" inputmode="decimal" value="${escapeHtml(item.inputCachedPeakPerMillion || "")}"></div>
+                <div class="field"><label>峰 / 标准时段输出 ¥</label><input data-price-field="outputPeakPerMillion" inputmode="decimal" value="${escapeHtml(item.outputPeakPerMillion || "")}"></div>
+                <div class="field full"><small>北京时间工作日 09:00–12:00、14:00–18:00 为标准时段；周末和法定节假日全天优惠。</small></div>
+                <div class="field full"><label>中国法定节假日（逗号分隔）</label><input data-price-field="holidayDates" value="${escapeHtml((item.holidayDates || []).join(", "))}" placeholder="例如 2026-10-01, 2026-10-02"></div>
+              </div>
+            </div>
+          </div>`;
+        const updateMode = () => {
+          const scheduled = $("[data-price-field=pricingMode]", wrapper).value === "deepseek_peak";
+          $(".flat-price-fields", wrapper).hidden = scheduled;
+          $(".scheduled-price-fields", wrapper).hidden = !scheduled;
+          // 峰谷价也是人民币，不再自动切成 USD。
+          $("[data-price-field=currency]", wrapper).value = "CNY";
+        };
+        $("[data-price-field=model]", wrapper).addEventListener("input", event => {
+          $("strong", wrapper).textContent = event.target.value.trim() || "新价格版本";
+          const candidate = (state.usageModels?.models || []).find(p => p.model === event.target.value);
+          if (candidate) $("[data-price-field=providerId]", wrapper).value = candidate.providerId;
+        });
+        $("[data-price-field=pricingMode]", wrapper).addEventListener("change", updateMode);
+        updateMode();
+        return wrapper;
+      }
+
+      function freeQuotaEntry(item = {}) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "free-quota-entry price-entry";
+        wrapper.dataset.quotaId = item.id || "";
+        const stateQuota = (state.usage?.freeQuotas || []).find(q =>
+          q.model === item.model && q.providerId === item.providerId);
+        const statusText = stateQuota
+          ? `已采集 ${formatInteger(stateQuota.observedTokens)} Token，估算剩余 ${formatInteger(stateQuota.remainingTokens)} Token${stateQuota.unknownUsageCalls ? "；有用量未知调用，需对账回填" : ""}`
+          : "保存后按完整调用历史核算剩余额度。";
+        wrapper.innerHTML = `
+          <div class="price-entry-header"><strong>免费额度</strong><button type="button" class="danger-link remove-free-quota">删除额度</button></div>
+          <div class="form-grid">
+            <div class="field"><label>模型</label><select data-quota-field="model" required>${pricingModelOptions(item.model || "")}</select></div>
+            <div class="field"><label>Provider ID</label><input data-quota-field="providerId" required value="${escapeHtml(item.providerId || "")}"></div>
+            <div class="field"><label>总免费 Token（0 = 不启用）</label><input data-quota-field="totalTokens" type="number" min="0" max="9999999999999" step="1" required value="${escapeHtml(String(item.totalTokens ?? 1000000))}"></div>
+            <div class="field"><label>起点前 / 外部已用 Token</label><input data-quota-field="usedTokensBefore" type="number" min="0" max="9999999999999" step="1" required value="${escapeHtml(String(item.usedTokensBefore ?? 0))}"></div>
+            <div class="field"><label>累计起点</label><input data-quota-field="startsAt" type="datetime-local" required value="${escapeHtml(toLocalDateTimeInput(item.startsAt))}"></div>
+            <div class="field"><label>到期时间（可留空）</label><input data-quota-field="expiresAt" type="datetime-local" value="${item.expiresAt ? escapeHtml(toLocalDateTimeInput(item.expiresAt)) : ""}"></div>
+            <div class="field full"><label>来源 / 备注</label><input data-quota-field="note" maxlength="300" value="${escapeHtml(item.note || "")}"></div>
+            <div class="field full"><small>额度内费用为 ¥0；超额按所配置单价估算。未配置超额单价时显示待确认，跨额度请求按 Token 占比分摊。</small></div>
+            <div class="field full"><small>${escapeHtml(statusText)}</small></div>
+          </div>`;
+        $("[data-quota-field=model]", wrapper).addEventListener("change", event => {
+          const candidate = (state.usageModels?.models || []).find(p => p.model === event.target.value);
+          if (candidate) $("[data-quota-field=providerId]", wrapper).value = candidate.providerId;
+        });
+        return wrapper;
+      }
+
+      function renderPricing(config) {
+        state.usagePricing = config;
+        const list = $("#price-entry-list");
+        list.replaceChildren(...(config.prices || []).map(priceEntry));
+        if (!list.children.length) list.appendChild(priceEntry());
+        $("#free-quota-list").replaceChildren(...(config.freeQuotas || []).map(freeQuotaEntry));
+        $("#price-history-list").innerHTML = (config.history || []).map(item =>
+          `<p><strong>${escapeHtml(item.model)}</strong> · ${escapeHtml(item.effectiveFrom)} · 人民币 CNY<br>${escapeHtml(item.providerId || (item.providerIds || []).join(", ") || "同名模型")}<br>${item.pricingMode === "deepseek_peak"
+            ? `优惠：普通输入 ${escapeHtml(item.inputOtherOffPeakPerMillion)} / 缓存 ${escapeHtml(item.inputCachedOffPeakPerMillion)} / 输出 ${escapeHtml(item.outputOffPeakPerMillion)}；标准：普通输入 ${escapeHtml(item.inputOtherPeakPerMillion)} / 缓存 ${escapeHtml(item.inputCachedPeakPerMillion)} / 输出 ${escapeHtml(item.outputPeakPerMillion)}`
+            : `普通输入 ${escapeHtml(item.inputOtherCnyPerMillion)} / 缓存 ${escapeHtml(item.inputCachedCnyPerMillion)} / 输出 ${escapeHtml(item.outputCnyPerMillion)}`}（元 / 百万 Token）</p>`
+        ).join("") || "<p>没有历史版本。</p>";
+        $("#add-price-entry").disabled =
+          list.children.length >= (config.limits?.priceEntries || 100);
+      }
+
+      async function openPricing() {
+        const dialog = $("#pricing-dialog");
+        $("#pricing-message").textContent = "正在读取配置…";
+        dialog.showModal();
+        try {
+          const config = await getJson("/api/usage-pricing");
+          state.usageModels = await getJson("/api/usage-models");
+          renderPricing(config);
+          $("#pricing-message").textContent = state.usageModels.ok
+            ? `automatic 有 ${state.usageModels.models.length} 个正常连接。额度内免费；未配置超额单价的费用待确认。`
+            : state.usageModels.error;
+        } catch (error) {
+          $("#pricing-message").className = "form-message error";
+          $("#pricing-message").textContent = `读取失败：${error.message}`;
+        }
+      }
+
+      async function savePricing(event) {
+        event.preventDefault();
+        const button = $("#save-pricing");
+        button.disabled = true;
+        $("#pricing-message").className = "form-message";
+        $("#pricing-message").textContent = "正在保存…";
+        try {
+          const prices = $$("#price-entry-list .price-entry").map(entry => {
+            const value = field => $(`[data-price-field="${field}"]`, entry).value.trim();
+            return {
+              id: entry.dataset.priceId,
+              pricingMode: value("pricingMode"),
+              currency: value("currency"),
+              providerId: value("providerId"),
+              model: value("model"),
+              providerIds: value("providerIds").split(",").map(s => s.trim()).filter(Boolean),
+              modelAliases: value("modelAliases").split(",").map(s => s.trim()).filter(Boolean),
+              effectiveFrom: new Date(value("effectiveFrom")).toISOString(),
+              inputOtherCnyPerMillion: value("inputOtherCnyPerMillion"),
+              inputCachedCnyPerMillion: value("inputCachedCnyPerMillion"),
+              outputCnyPerMillion: value("outputCnyPerMillion"),
+              inputOtherOffPeakPerMillion: value("inputOtherOffPeakPerMillion"),
+              inputCachedOffPeakPerMillion: value("inputCachedOffPeakPerMillion"),
+              outputOffPeakPerMillion: value("outputOffPeakPerMillion"),
+              inputOtherPeakPerMillion: value("inputOtherPeakPerMillion"),
+              inputCachedPeakPerMillion: value("inputCachedPeakPerMillion"),
+              outputPeakPerMillion: value("outputPeakPerMillion"),
+              holidayDates: value("holidayDates").split(",").map(item => item.trim()).filter(Boolean)
+            };
+          });
+          const freeQuotas = $$(".free-quota-entry").map(entry => {
+            const value = field => $(`[data-quota-field="${field}"]`, entry).value.trim();
+            return {
+              id: entry.dataset.quotaId, model: value("model"), providerId: value("providerId"),
+              totalTokens: value("totalTokens"), usedTokensBefore: value("usedTokensBefore"),
+              startsAt: new Date(value("startsAt")).toISOString(),
+              expiresAt: value("expiresAt") ? new Date(value("expiresAt")).toISOString() : "",
+              note: value("note")
+            };
+          });
+          renderPricing(await postJson(
+            "/api/usage-pricing",
+            { version: 2, prices, freeQuotas },
+            "usage-pricing"
+          ));
+          $("#pricing-message").className = "form-message success";
+          $("#pricing-message").textContent = "单价已保存，正在重新核算报表。";
+          await loadUsage();
+        } catch (error) {
+          $("#pricing-message").className = "form-message error";
+          $("#pricing-message").textContent = `保存失败：${error.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      function activateView(name, moveFocus = false) {
+        if (!viewMeta[name]) return;
+        state.currentView = name;
+        $$(".view").forEach(view => { view.hidden = view.id !== `view-${name}`; });
+        $$(".nav [role=tab]").forEach(tab => {
+          const active = tab.dataset.view === name;
+          tab.setAttribute("aria-selected", String(active));
+          tab.tabIndex = active ? 0 : -1;
+          if (active && moveFocus) tab.focus();
+        });
+        $("#page-title").textContent = viewMeta[name][0];
+        $("#page-subtitle").textContent = viewMeta[name][1];
+        document.body.dataset.view = name;
+        history.replaceState(null, "", `#${name}`);
+        if (name === "overview" && state.metrics) {
+          window.requestAnimationFrame(drawResourceChart);
+        }
+        if (name === "usage" && !state.usage) loadUsage();
+        if (name === "logs" && $("#log-output").dataset.state === "empty") loadLogs();
+      }
+
+      async function loadLogs() {
+        const output = $("#log-output");
+        const button = $("#load-logs");
+        const service = $("#log-service").value;
+        const order = state.logOrder;
+        output.dataset.state = "empty";
+        output.textContent = "正在读取日志…";
+        button.disabled = true;
+        try {
+          const data = await getJson(
+            `/api/logs?service=${encodeURIComponent(service)}&order=${encodeURIComponent(order)}`
+          );
+          const diagnostics = (data.attempts || []).map(item =>
+            `- ${item.source}: ${({
+              ok: "已读取",
+              empty: "无输出",
+              unavailable: "不可用",
+              "not-found": "未发现"
+            })[item.result] || item.result}`
+          ).join("\n");
+          state.rawLogs = data.lines || [
+            "没有可显示的日志。",
+            `来源：${data.source || "none"}`,
+            diagnostics ? `采集诊断：\n${diagnostics}` : ""
+          ].filter(Boolean).join("\n");
+          renderLogs();
+          output.dataset.state = data.lines ? "ready" : "empty";
+          if ($("#auto-scroll").checked) {
+            output.scrollTop = order === "asc" ? output.scrollHeight : 0;
+          }
+        } catch (error) {
+          output.dataset.state = "error";
+          state.rawLogs = "";
+          output.textContent = `日志读取失败：${error.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      function logLevel(line) {
+        if (/\b(FATAL|CRITICAL|ERROR|ERR)\b|Exception|Traceback/i.test(line)) return "error";
+        if (/\b(WARN|WARNING)\b/i.test(line)) return "warn";
+        if (/\b(INFO|NOTICE)\b/i.test(line)) return "info";
+        if (/\b(DEBUG|TRACE)\b/i.test(line)) return "debug";
+        return "info";
+      }
+
+      function logPreferences() {
+        return {
+          minLevel: $("#log-min-level").value,
+          ignore: $("#log-ignore").value.trim(),
+          regex: $("#log-ignore-regex").checked
+        };
+      }
+
+      function saveLogPreferences() {
+        try {
+          localStorage.setItem("bot-manager-log-preferences", JSON.stringify(logPreferences()));
+        } catch (_) {}
+        renderLogs();
+      }
+
+      function restoreLogPreferences() {
+        try {
+          const saved = JSON.parse(localStorage.getItem("bot-manager-log-preferences") || "{}");
+          if (["debug", "info", "warn", "error"].includes(saved.minLevel)) {
+            $("#log-min-level").value = saved.minLevel;
+          }
+          $("#log-ignore").value = typeof saved.ignore === "string" ? saved.ignore : "";
+          $("#log-ignore-regex").checked = Boolean(saved.regex);
+        } catch (_) {}
+      }
+
+      function renderLogs() {
+        if (!state.rawLogs) return;
+        const output = $("#log-output");
+        const preferences = logPreferences();
+        const ranks = { debug: 10, info: 20, warn: 30, error: 40 };
+        let matcher = null;
+        if (preferences.ignore) {
+          try {
+            matcher = preferences.regex
+              ? new RegExp(preferences.ignore, "i")
+              : new RegExp(
+                  preferences.ignore.split(",").map(value =>
+                    value.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+                  ).filter(Boolean).join("|"),
+                  "i"
+                );
+            $("#log-ignore").removeAttribute("aria-invalid");
+            $("#log-ignore").title = "";
+          } catch (error) {
+            $("#log-ignore").setAttribute("aria-invalid", "true");
+            $("#log-ignore").title = `正则表达式无效：${error.message}`;
+          }
+        }
+        const fragment = document.createDocumentFragment();
+        const visible = state.rawLogs.split(/\r?\n/).filter(line => {
+          const level = logLevel(line);
+          return ranks[level] >= ranks[preferences.minLevel] && !(matcher && matcher.test(line));
+        });
+        visible.forEach(line => {
+          const row = document.createElement("span");
+          row.className = `log-line ${logLevel(line)}`;
+          row.textContent = line || " ";
+          fragment.appendChild(row);
+        });
+        output.replaceChildren(fragment);
+        if (!visible.length) {
+          output.textContent = "当前忽略策略隐藏了全部日志。";
+          output.dataset.state = "empty";
+        }
+        if ($("#auto-scroll").checked) {
+          output.scrollTop = state.logOrder === "asc" ? output.scrollHeight : 0;
+        }
+      }
+
+      function bindEvents() {
+        $$(".nav [role=tab]").forEach((tab, index, tabs) => {
+          tab.addEventListener("click", () => activateView(tab.dataset.view));
+          tab.addEventListener("keydown", event => {
+            if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+            event.preventDefault();
+            const direction = ["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1;
+            const next = tabs[(index + direction + tabs.length) % tabs.length];
+            activateView(next.dataset.view, true);
+          });
+        });
+        $("#refresh-button").addEventListener("click", () => {
+          if (state.currentView === "usage") loadUsage();
+          else if (state.currentView === "logs") loadLogs();
+          else refreshStatus();
+        });
+        $("#refresh-balances").addEventListener("click", () => loadBalances(true));
+        $("#configure-balances").addEventListener("click", openBalanceConfig);
+        $("#toggle-provider-secrets").addEventListener("click", toggleProviderSecrets);
+        $("#close-balance-config").addEventListener("click", () => $("#balance-config-dialog").close());
+        $("#cancel-balance-config").addEventListener("click", () => $("#balance-config-dialog").close());
+        $("#balance-config-dialog").addEventListener("close", clearProviderSecrets);
+        $("#balance-config-form").addEventListener("submit", saveProviderConfig);
+        $("#add-custom-provider").addEventListener("click", () => {
+          const list = $("#custom-provider-list");
+          const limit = state.providerConfig?.limits?.customProviders || 8;
+          if (list.children.length >= limit) return;
+          list.appendChild(customProviderForm());
+          $("#add-custom-provider").disabled = list.children.length >= limit;
+        });
+        $("#custom-provider-list").addEventListener("click", event => {
+          const remove = event.target.closest(".remove-custom-provider");
+          if (!remove) return;
+          remove.closest(".custom-provider-form").remove();
+          $("#add-custom-provider").disabled = false;
+        });
+        $$("[data-metrics-range]").forEach(button => {
+          button.addEventListener("click", () => loadMetrics(button.dataset.metricsRange));
+        });
+        $("#refresh-usage").addEventListener("click", loadUsage);
+        ["usage-range", "usage-plugin", "usage-model", "usage-status"].forEach(id => {
+          $(`#${id}`).addEventListener("change", () => {
+            state.usageOffset = 0;
+            loadUsage();
+          });
+        });
+        $$("[data-usage-view]").forEach(button => {
+          button.addEventListener("click", () => setUsageView(button.dataset.usageView));
+        });
+        $$("[data-usage-granularity]").forEach(button => {
+          button.addEventListener("click", () =>
+            setUsageGranularity(button.dataset.usageGranularity)
+          );
+        });
+        bindHourlyHover();
+        bindResourceHover();
+        $("#usage-prev-page").addEventListener("click", () => {
+          state.usageOffset = Math.max(0, state.usageOffset - 100);
+          loadUsage();
+        });
+        $("#usage-next-page").addEventListener("click", () => {
+          const total = Number(state.usage?.pagination?.total) || 0;
+          if (state.usageOffset + 100 >= total) return;
+          state.usageOffset += 100;
+          loadUsage();
+        });
+        $("#configure-pricing").addEventListener("click", openPricing);
+        $("#close-pricing").addEventListener("click", () => $("#pricing-dialog").close());
+        $("#cancel-pricing").addEventListener("click", () => $("#pricing-dialog").close());
+        $("#pricing-form").addEventListener("submit", savePricing);
+        $("#add-free-quota").addEventListener("click", () => {
+          if ($$(".free-quota-entry").length < 100) $("#free-quota-list").appendChild(freeQuotaEntry());
+        });
+        $("#free-quota-list").addEventListener("click", event => {
+          event.target.closest(".remove-free-quota")?.closest(".free-quota-entry").remove();
+        });
+        $("#add-price-entry").addEventListener("click", () => {
+          const list = $("#price-entry-list");
+          const limit = state.usagePricing?.limits?.priceEntries || 100;
+          if (list.children.length >= limit) return;
+          list.appendChild(priceEntry());
+          $("#add-price-entry").disabled = list.children.length >= limit;
+        });
+        $("#price-entry-list").addEventListener("click", event => {
+          const remove = event.target.closest(".remove-price-entry");
+          if (!remove) return;
+          remove.closest(".price-entry").remove();
+          $("#add-price-entry").disabled = false;
+        });
+        $("#load-logs").addEventListener("click", loadLogs);
+        $("#log-service").addEventListener("change", loadLogs);
+        $("#log-min-level").addEventListener("change", saveLogPreferences);
+        $("#log-ignore").addEventListener("input", saveLogPreferences);
+        $("#log-ignore-regex").addEventListener("change", saveLogPreferences);
+        $$("[data-log-order]").forEach(button => {
+          button.addEventListener("click", () => {
+            state.logOrder = button.dataset.logOrder;
+            $$("[data-log-order]").forEach(item => {
+              item.setAttribute("aria-pressed", String(item === button));
+            });
+            loadLogs();
+          });
+        });
+      }
+
+      async function init() {
+        restoreLogPreferences();
+        bindEvents();
+        try {
+          state.config = await getJson("/api/config");
+          $$(".external-link").forEach(link => { link.href = state.config.urls[link.dataset.url]; });
+        } catch (error) {
+          showError(`本地配置读取失败：${error.message}`);
+        }
+        const initial = location.hash.slice(1);
+        activateView(viewMeta[initial] ? initial : "overview");
+        await Promise.all([refreshStatus(), loadMetrics("24h"), loadBalances()]);
+        state.timer = window.setInterval(() => {
+          if (state.currentView === "usage") loadUsage();
+          else refreshStatus();
+        }, (state.config?.refreshSeconds || 10) * 1000);
+        if ("ResizeObserver" in window) {
+          new ResizeObserver(() => drawResourceChart()).observe($("#resource-chart").parentElement);
+          new ResizeObserver(() => drawPluginChart()).observe($("#usage-plugin-chart").parentElement);
+          new ResizeObserver(() => drawHourlyChart()).observe($("#usage-hour-chart").parentElement);
+          new ResizeObserver(() => drawDailyChart()).observe($("#usage-day-chart").parentElement);
+        } else {
+          window.addEventListener("resize", () => {
+            drawResourceChart();
+            drawPluginChart();
+            drawHourlyChart();
+            drawDailyChart();
+          });
+        }
+        document.addEventListener("visibilitychange", () => {
+          if (!document.hidden && state.currentView === "overview") refreshStatus();
+        });
+      }
+
+      init();
+    })();
+  </script>
+</body>
+</html>
