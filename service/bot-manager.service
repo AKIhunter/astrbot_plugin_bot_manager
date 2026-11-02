@@ -1,0 +1,31 @@
+[Unit]
+Description=Bot Manager loopback dashboard
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=astrbot
+UMask=0027
+WorkingDirectory=/opt/bot-manager/current
+ExecStart=/usr/bin/python3 /opt/bot-manager/current/server-panel.py --host 127.0.0.1 --port 17321 --credentials /etc/bot-manager/credentials.json --provider-credentials /etc/bot-manager/provider-credentials.json --internal-token /etc/bot-manager/plugin-token --metrics-db /var/lib/bot-manager/metrics.db
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=10s
+StateDirectory=bot-manager
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/etc/bot-manager
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

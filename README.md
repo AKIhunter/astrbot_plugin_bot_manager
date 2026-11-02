@@ -55,24 +55,25 @@
 
 ### 第二步：需要余额、搜索汇总或网页时，再接配套服务
 
-配套源码位于 [源码总库的 bot-manager-service 目录](https://github.com/AKIhunter/astrbot_plugin/tree/main/bot-manager-service)。
+配套源码位于本仓库的 [service/](service/) 目录，与根目录插件一起维护。
+GitHub 的完整克隆包含服务源码；市场使用的 ZIP 通过 `.gitattributes` 排除该目录，
+因此服务安装应克隆本仓库，不能假定从市场下载的插件 ZIP 也带有服务文件。
 现有安装器面向 Linux + systemd，并使用 `/var/lib/astrbot` 及 `astrbot` 系统用户；
 它不是 Windows/macOS 或任意 Docker 布局的一键安装器。
 
-符合上述布局的服务器，在确认已有配置与数据备份后，先克隆源码总库：
+符合上述布局的服务器，在确认已有配置与数据备份后，先克隆本仓库：
 
 ```bash
-git clone https://github.com/AKIhunter/astrbot_plugin.git
+git clone https://github.com/AKIhunter/astrbot_plugin_bot_manager.git
 ```
 
-进入克隆得到的 `astrbot_plugin` 目录，再执行以下命令：
+进入克隆得到的 `astrbot_plugin_bot_manager` 目录，再执行以下命令：
 
 ```bash
-cp -R bot-manager bot-manager-service/astrbot_plugin_usage_telemetry
-sudo sh bot-manager-service/install-server.sh bot-manager-service
+sudo sh service/install-server.sh service
 ```
 
-执行命令时应在克隆后的仓库根目录。已有同名暂存目录时先核对内容，不要反复复制造成嵌套。
+执行命令时应在克隆后的仓库根目录。安装器直接读取根目录插件源码，无需再复制一份。
 安装过程会配置系统服务及更新插件，可能短暂中断 AstrBot；升级前先核对线上源码基线。
 非标准布局需要自行适配安装路径、文件权限、账户和容器网络。
 
@@ -183,8 +184,9 @@ AstrBot >=4.29.0；Python 3.10+，标准库实现，无额外依赖。
 
 旧 `astrbot_plugin_search_meter` 必须移出插件加载目录后重启，不能让两个计量器并存。
 服务端安装器上传全部6个运行文件（含 `runtime_paths.py`），保留并移出旧搜索插件，失败时恢复旧目录。
-插件维护源码位于 [源码总库](https://github.com/AKIhunter/astrbot_plugin) 的 `bot-manager/`，
-本仓库为市场发布镜像。
+本仓库是插件及配套服务的维护仓库，不再从旧总库同步。
+根目录维护插件，`service/` 维护配套服务；后续修改、提交、更新均在此进行。
+维护步骤和迁移来源见 [维护说明](docs/maintenance.md)。
 部署前必须核对当前线上基线。
 
 ## 验证与限制

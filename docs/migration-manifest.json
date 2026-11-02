@@ -1,0 +1,89 @@
+{
+  "migration_date": "2026-11-02",
+  "archived_source_repository": "https://github.com/AKIhunter/astrbot_plugin",
+  "source_commit": "70f73f1f249c0dddd79e262a0cc3fc50264c30f0",
+  "repository": "https://github.com/AKIhunter/astrbot_plugin_bot_manager",
+  "files_before_path_and_document_updates": [
+    {
+      "source": "bot-manager/.gitattributes",
+      "target": ".gitattributes",
+      "sha256": "d1c2d15ddc77416ee547adc4f9e703149e5f8d7a70314d18e80f42536bc5aefa"
+    },
+    {
+      "source": "bot-manager/README.md",
+      "target": "README.md",
+      "sha256": "49a43b0cfc1a10f83c02cd20f9d642f5147a19af5473f74ce777bac65354bf93"
+    },
+    {
+      "source": "bot-manager/command_query.py",
+      "target": "command_query.py",
+      "sha256": "12c4a0e96eb578123036d98c8457fe982aff4344295c75439b5c850ff52ed6e6"
+    },
+    {
+      "source": "bot-manager/main.py",
+      "target": "main.py",
+      "sha256": "fdf7cbb3b146755444b4e7d254e7d474b23d98a472586289c5eaecc4e17c5e8f"
+    },
+    {
+      "source": "bot-manager/metadata.yaml",
+      "target": "metadata.yaml",
+      "sha256": "3574aab4f5ba7e9897fbe4009e626ee8ae82641f4e8ceab9a729c7ed60018a57"
+    },
+    {
+      "source": "bot-manager/runtime_paths.py",
+      "target": "runtime_paths.py",
+      "sha256": "a0b6d37290f77fff03c050f9d197d68fb55fbbb00a9c4184dfa9826fd0874fd4"
+    },
+    {
+      "source": "bot-manager/search_meter.py",
+      "target": "search_meter.py",
+      "sha256": "ae24dddd99c3f6ef100361635f31e52f79a961dd586c060f40b83c46007e6715"
+    },
+    {
+      "source": "bot-manager/usage_query.py",
+      "target": "usage_query.py",
+      "sha256": "f28f116ad78b0671f634b9e51c74dc72b63bc94150cff391f0b1cbf586dbb51a"
+    },
+    {
+      "source": "bot-manager-service/README.md",
+      "target": "service/README.md",
+      "sha256": "2e59af362c896d02d99b8188c4e03e1ec5fcba3399761acf7095fa71362bf57d"
+    },
+    {
+      "source": "bot-manager-service/bot-manager.service",
+      "target": "service/bot-manager.service",
+      "sha256": "381f144948a4b738ccaa88195478ef8cf15e02c4e6c39b3a89344799127884e6"
+    },
+    {
+      "source": "bot-manager-service/install-server.sh",
+      "target": "service/install-server.sh",
+      "sha256": "64f97d4c8a8a3207c264fda8bebb37e0d0767540a1691aaafd3793155eeffa81"
+    },
+    {
+      "source": "bot-manager-service/panel.html",
+      "target": "service/panel.html",
+      "sha256": "b99cbd1b144a35f53b69104a2d61c66c8331cc2fc8799e39bdaf4a3fac3277e2"
+    },
+    {
+      "source": "bot-manager-service/server-agent.py",
+      "target": "service/server-agent.py",
+      "sha256": "4421f6ea9b2711f9bf00b4416a69cbe5c7e083d188d75172dea787491d55e0aa"
+    },
+    {
+      "source": "bot-manager-service/server-configure.py",
+      "target": "service/server-configure.py",
+      "sha256": "b232859b47a3bfcb2d0fd28eb2edc698e82c50739087c0c3a8ef9b5ee6fe8cd8"
+    },
+    {
+      "source": "bot-manager-service/server-monitor.py",
+      "target": "service/server-monitor.py",
+      "sha256": "cbb8d764bdcacdd08aa7aa66867a365419f6cb3f5694918c19a82f11f4b487b9"
+    },
+    {
+      "source": "bot-manager-service/server-panel.py",
+      "target": "service/server-panel.py",
+      "sha256": "e3187ff024d357ebf7173813d50c3c08cfde6dcb95a26dbc3149c92a4eef0eeb"
+    }
+  ],
+  "purpose": "Source audit only; future edits take place in this independent repository."
+}
