@@ -670,6 +670,24 @@
     .usage-view-switch {
       grid-template-columns: repeat(3, minmax(58px, 1fr));
     }
+    .usage-view-switch.plugin-switch { grid-template-columns: repeat(4, minmax(54px, 1fr)); }
+    .usage-chart-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .panel-title.usage-charts-title { flex-wrap: wrap; }
+    .usage-charts-title > div:first-child { flex: 1 1 220px; min-width: 0; }
+    .usage-chart-controls label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; }
+    .usage-chart-controls select { min-height: 34px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+    .usage-series-legend { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 16px 0; max-height: 180px; overflow: auto; }
+    .usage-series-legend[hidden], .usage-chart-detail[hidden] { display: none; }
+    .usage-series-legend button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; max-width: 100%; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); text-align: left; cursor: pointer; font-size: 12px; }
+    .usage-series-legend button:hover { background: var(--surface-subtle); border-color: var(--line-strong); }
+    .usage-series-legend i { flex: 0 0 10px; width: 10px; height: 10px; border-radius: 2px; }
+    .usage-series-legend span { overflow-wrap: anywhere; }
+    .usage-series-legend small { color: var(--muted); white-space: nowrap; }
+    .usage-chart-detail { margin: 0 16px 14px; padding: 10px 12px; border: 1px solid var(--line); background: var(--surface-subtle); border-radius: 6px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .usage-chart-detail strong { color: var(--ink); display: block; margin-bottom: 4px; }
+    .usage-chart-detail span { display: inline-block; margin-right: 14px; }
+    .usage-chart-note { margin: 8px 16px 12px; color: var(--muted); font-size: 12px; }
+    .usage-chart-scroll { overflow-x: auto; }
     .metrics-ranges {
       grid-template-columns: repeat(5, minmax(54px, 1fr));
     }
@@ -682,7 +700,8 @@
     .chart-tooltip {
       position: absolute;
       z-index: 6;
-      min-width: 176px;
+      min-width: 156px;
+      max-width: min(320px, calc(100vw - 48px));
       padding: 10px 12px;
       border-radius: 10px;
       background: rgba(16, 24, 22, 0.94);
@@ -692,7 +711,8 @@
       box-shadow: 0 10px 26px rgba(0, 0, 0, 0.3);
       pointer-events: none;
       transform: translate(-50%, -100%);
-      white-space: nowrap;
+      white-space: normal;
+      overflow-wrap: anywhere;
     }
     .chart-tooltip[hidden] { display: none; }
     .chart-tooltip strong {
@@ -1242,13 +1262,18 @@
           </section>
 
           <section class="panel section">
-            <div class="panel-title">
+            <div class="panel-title usage-charts-title">
               <div><h2 id="usage-day-title">每日模型用量</h2><span id="usage-day-note">北京时间自然日 · 非供应商账单</span></div>
+              <div class="usage-chart-controls">
+                <label for="usage-model-metric">图表指标 <select id="usage-model-metric"><option value="tokens">Token 用量</option><option value="amount">消费金额</option></select></label>
               <div class="segmented usage-view-switch" role="group" aria-label="统计粒度">
                 <button type="button" data-usage-granularity="day" aria-pressed="true">按日</button>
                 <button type="button" data-usage-granularity="hour" aria-pressed="false">按小时</button>
+                <button type="button" data-usage-granularity="pie" aria-pressed="false">饼图</button>
+              </div>
               </div>
             </div>
+            <div id="usage-model-legend" class="usage-series-legend" aria-label="模型颜色与消费详情"></div>
             <div class="usage-chart-wrap" id="usage-day-chart-wrap" hidden>
               <canvas id="usage-day-chart" role="img" aria-label="按日消费柱状图"></canvas>
               <div class="chart-tooltip" id="usage-day-tooltip" hidden></div>
@@ -1264,14 +1289,23 @@
               <div class="chart-tooltip" id="usage-hour-tooltip" hidden></div>
             </div>
             <div class="empty" id="usage-hour-unsupported" hidden>当前时间范围不支持按小时查看。按小时仅在「今日（实时）」「昨日」「最近 24 小时」下可用，请切换时间范围，或改用「按日」。</div>
+            <div class="usage-chart-wrap" id="usage-model-pie-wrap" hidden>
+              <canvas id="usage-model-pie" role="img" aria-label="模型消费占比饼图" tabindex="0"></canvas>
+              <div class="chart-tooltip" id="usage-model-pie-tooltip" hidden></div>
+            </div>
+            <div class="usage-chart-detail" id="usage-model-chart-detail" aria-live="polite">悬停或点按图形查看对应模型；也可聚焦图表后用方向键查看，或点击模型图例。</div>
           </section>
           <section class="panel section">
-            <div class="panel-title">
+            <div class="panel-title usage-charts-title">
               <div><h2>按插件汇总</h2><span id="usage-period">等待数据</span></div>
-              <div class="segmented usage-view-switch" role="group" aria-label="插件汇总显示方式">
+              <div class="usage-chart-controls">
+                <label for="usage-plugin-metric">图表指标 <select id="usage-plugin-metric"><option value="amount">消费金额</option><option value="tokens">Token 用量</option></select></label>
+              <div class="segmented usage-view-switch plugin-switch" role="group" aria-label="插件汇总显示方式">
                 <button type="button" data-usage-view="table" aria-pressed="true">表格</button>
                 <button type="button" data-usage-view="bar" aria-pressed="false">柱状图</button>
                 <button type="button" data-usage-view="line" aria-pressed="false">折线图</button>
+                <button type="button" data-usage-view="pie" aria-pressed="false">饼图</button>
+              </div>
               </div>
             </div>
             <div class="table-wrap" id="usage-plugin-table-wrap">
@@ -1280,9 +1314,13 @@
                 <tbody id="usage-plugin-table"><tr><td colspan="9"><div class="empty">打开本页后读取用量数据。</div></td></tr></tbody>
               </table>
             </div>
-            <div class="usage-chart-wrap" id="usage-plugin-chart-wrap" hidden>
+            <div id="usage-plugin-legend" class="usage-series-legend" hidden aria-label="插件颜色与消费详情"></div>
+            <div class="usage-chart-wrap usage-chart-scroll" id="usage-plugin-chart-wrap" hidden>
               <canvas id="usage-plugin-chart" role="img" aria-label="插件估算费用图表"></canvas>
+              <div class="chart-tooltip" id="usage-plugin-tooltip" hidden></div>
             </div>
+            <p id="usage-plugin-chart-note" class="usage-chart-note" hidden></p>
+            <div class="usage-chart-detail" id="usage-plugin-chart-detail" aria-live="polite" hidden>悬停、点按图形或点击图例查看插件消费详情。</div>
           </section>
 
           <section class="panel section">
@@ -1488,6 +1526,11 @@
         usageGranularity: "day",
         hourlySlots: [],
         dailySlots: [],
+        modelPieSlots: [],
+        pluginSlots: [],
+        usageModelMetric: "tokens",
+        usagePluginMetric: "amount",
+        chartColors: {},
         logOrder: "asc",
         rawLogs: "",
         currentView: "overview",
@@ -2251,108 +2294,157 @@
       }
 
       function drawPluginChart() {
-        const canvas = $("#usage-plugin-chart");
         if (state.usageView === "table" || !state.usage) return;
-        const wrapper = canvas.parentElement;
-        const rect = wrapper.getBoundingClientRect();
-        if (!rect.width || !rect.height) return;
-        const ratio = Math.min(window.devicePixelRatio || 1, 2);
-        canvas.width = Math.round(rect.width * ratio);
-        canvas.height = Math.round(rect.height * ratio);
-        const context = canvas.getContext("2d");
-        context.scale(ratio, ratio);
-        const width = rect.width;
-        const height = rect.height;
-        const items = (state.usage.byPlugin || []).slice(0, 14);
-        const values = items.map(item => Number(item.knownAmounts?.CNY || 0));
-        const maximum = Math.max(...values, 0.01);
-        const padding = { top: 24, right: 18, bottom: 74, left: 58 };
-        const plotWidth = width - padding.left - padding.right;
-        const plotHeight = height - padding.top - padding.bottom;
-        context.clearRect(0, 0, width, height);
-        context.font = '11px "Segoe UI", "Microsoft YaHei UI", sans-serif';
-        context.textBaseline = "middle";
-        context.strokeStyle = "#e2e8e5";
-        context.fillStyle = "#68756f";
-        context.lineWidth = 1;
-        for (let index = 0; index <= 4; index += 1) {
-          const y = padding.top + plotHeight * index / 4;
-          context.beginPath();
-          context.moveTo(padding.left, y);
-          context.lineTo(width - padding.right, y);
-          context.stroke();
-          context.textAlign = "right";
-          const tick = maximum * (1 - index / 4);
-          context.fillText(config.tokenAxis ? formatInteger(Math.round(tick)) : `¥${tick.toFixed(2)}`, padding.left - 8, y);
+        const metric = state.usagePluginMetric;
+        const items = (state.usage.byPlugin || []).slice().sort((a, b) =>
+          chartValue(b, metric) - chartValue(a, metric) || a.key.localeCompare(b.key));
+        renderSeriesLegend("#usage-plugin-legend", items, "plugin", metric);
+        const canvas = $("#usage-plugin-chart");
+        // 插件多时横向滚动，保留所有插件，不截断到前 14 项。
+        canvas.style.width = state.usageView === "pie" ? "100%" : `${Math.max(
+          canvas.parentElement.clientWidth - 32, items.length * 54 + 76)}px`;
+        if (state.usageView === "pie") {
+          drawPie({canvasId: "#usage-plugin-chart", slotsKey: "pluginSlots",
+            items, metric, kind: "plugin"});
+        } else {
+          drawBars({canvasId: "#usage-plugin-chart", slotsKey: "pluginSlots", items,
+            primary: item => chartValue(item, metric), tokenAxis: metric === "tokens",
+            primaryLabel: metric === "tokens" ? "Token 用量" : "消费金额（元）",
+            label: item => pluginLabel(item.key).slice(0, 12),
+            kind: "plugin", line: state.usageView === "line", angledLabels: true,
+            maxBarWidth: 42, emptyText: "当前筛选范围没有插件用量",
+            aria: count => `插件${state.usageView === "line" ? "折线图" : "柱状图"}，${count} 个插件，${metric === "tokens" ? "Token 用量" : "消费金额"}`});
         }
-        if (!items.length) {
-          context.textAlign = "center";
-          context.fillText("当前筛选范围没有插件用量", width / 2, height / 2);
-          return;
-        }
-        const slot = plotWidth / items.length;
-        const points = [];
-        items.forEach((item, index) => {
-          const value = values[index];
-          const x = padding.left + slot * (index + 0.5);
-          const y = padding.top + plotHeight * (1 - value / maximum);
-          points.push([x, y]);
-          if (state.usageView === "bar") {
-            const barWidth = Math.max(8, Math.min(42, slot * 0.58));
-            context.fillStyle = "#087e6a";
-            context.fillRect(x - barWidth / 2, y, barWidth, padding.top + plotHeight - y);
-          }
-          context.save();
-          context.translate(x, padding.top + plotHeight + 10);
-          context.rotate(-Math.PI / 4);
-          context.textAlign = "right";
-          context.fillStyle = "#68756f";
-          const label = pluginLabel(item.key);
-          context.fillText(label.length > 15 ? `${label.slice(0, 14)}…` : label, 0, 0);
-          context.restore();
-        });
-        if (state.usageView === "line") {
-          context.strokeStyle = "#087e6a";
-          context.lineWidth = 2;
-          context.beginPath();
-          points.forEach(([x, y], index) => index ? context.lineTo(x, y) : context.moveTo(x, y));
-          context.stroke();
-          points.forEach(([x, y]) => {
-            context.beginPath();
-            context.arc(x, y, 4, 0, Math.PI * 2);
-            context.fillStyle = "#ffffff";
-            context.fill();
-            context.strokeStyle = "#087e6a";
-            context.stroke();
-          });
-        }
-        canvas.setAttribute(
-          "aria-label",
-          `按插件估算费用${state.usageView === "bar" ? "柱状图" : "折线图"}，显示 ${items.length} 个插件`
-        );
+        $("#usage-plugin-chart-note").textContent = chartScopeNote(metric) +
+          (state.usageView === "line" ? " · 横轴为按消费排序的插件，折线用于插件比较，不代表时间趋势。" : "");
       }
 
       const BAR_ACTUAL = "#087e6a";
       const BAR_ESTIMATE = "#9ad8ca";
 
-      function drawBars(config) {
-        const canvas = $(config.canvasId);
-        if (!canvas) return;
-        const wrapper = canvas.parentElement;
-        const rect = wrapper.getBoundingClientRect();
-        const items = (config.items || []).slice();
-        if (!rect.width || !rect.height) {
-          state[config.slotsKey] = [];
-          return;
+      function chartColor(key, kind = "model") {
+        const id = `${kind}:${key}`;
+        if (!state.chartColors[id]) {
+          let hash = 2166136261;
+          for (const char of id) hash = Math.imul(hash ^ char.codePointAt(0), 16777619) >>> 0;
+          state.chartColors[id] = `hsl(${hash % 360} ${56 + hash % 19}% ${39 + hash % 8}%)`;
         }
+        return state.chartColors[id];
+      }
+
+      function chartValue(item, metric) {
+        const value = metric === "tokens" ? item.totalTokens : item.knownAmounts?.CNY ?? item.knownAmountCny;
+        return Math.max(0, Number(value) || 0);
+      }
+
+      function chartMoney(value) {
+        return `¥${Number(value || 0).toLocaleString("zh-CN", {minimumFractionDigits: 2, maximumFractionDigits: 8})}`;
+      }
+
+      function chartScopeNote(metric) {
+        const summary = state.usage?.summary || {};
+        if (metric === "tokens") return "仅展示已记录 Token；缺失逐笔用量不按零消耗推断。";
+        return `按已核算人民币金额计算占比；免费为零，待确认费用不进入金额占比。${summary.unknownUsageCalls || summary.missingPriceCalls ? ` 当前 ${formatInteger(summary.unpricedCalls)} 次调用费用待确认。` : ""}`;
+      }
+
+      function chartDetailHtml(item, kind, metric, total, period = "") {
+        const label = kind === "plugin" ? pluginLabel(item.key) : item.key;
+        const amount = item.knownAmounts?.CNY ?? item.knownAmountCny;
+        const known = item.pricedCalls || item.aggregateRecords || Number(amount) > 0;
+        const share = total > 0 ? `${(chartValue(item, metric) / total * 100).toFixed(2)}%` : "—";
+        const balanceHour = kind === "model" && state.usage?.balance?.available
+          ? (state.usage.byHour || []).find(hour => hour.key === period) : null;
+        return `<strong>${escapeHtml(period ? `${period} · ${label}` : label)}</strong>` +
+          `<span>消费 ${known ? chartMoney(amount) : "待确认"}</span>` +
+          `<span>Token ${formatInteger(item.totalTokens)}</span><span>调用 ${formatInteger(item.calls)} 次</span>` +
+          `<span>免费 Token ${formatInteger(item.freeTokens)}</span><span>占比 ${share}</span>` +
+          (item.unknownUsageCalls ? `<span>${formatInteger(item.unknownUsageCalls)} 次逐笔用量未完整返回</span>` : "") +
+          (item.missingPriceCalls ? `<span>${formatInteger(item.missingPriceCalls)} 次待配置单价</span>` : "") +
+          (item.aggregateRecords ? `<span>含 ${formatInteger(item.aggregateRecords)} 条汇总补录</span>` : "") +
+          (balanceHour?.balanceConsumed != null
+            ? `<span>DeepSeek 账户余额实测 ${chartMoney(balanceHour.balanceConsumed)}</span><span>账户全连接估算 ${chartMoney(balanceHour.accountAmountCny)}</span>` : "");
+      }
+
+      function renderSeriesLegend(selector, items, kind, metric) {
+        const legend = $(selector);
+        const total = items.reduce((sum, item) => sum + chartValue(item, metric), 0);
+        legend.innerHTML = items.map((item, index) => {
+          const amount = item.knownAmounts?.CNY ?? item.knownAmountCny;
+          const label = kind === "plugin" ? pluginLabel(item.key) : item.key;
+          const value = metric === "tokens" ? `${formatInteger(item.totalTokens)} Token`
+            : item.pricedCalls || item.aggregateRecords || Number(amount) > 0 ? chartMoney(amount) : "待确认";
+          return `<button type="button" data-series-index="${index}" title="${escapeHtml(label)}"><i style="background:${chartColor(item.key, kind)}"></i><span>${escapeHtml(label)}</span><small>${escapeHtml(value)}${total > 0 ? ` · ${(chartValue(item, metric) / total * 100).toFixed(1)}%` : ""}</small></button>`;
+        }).join("");
+        legend.querySelectorAll("button").forEach(button => {
+          button.addEventListener("click", () => {
+            $(`#usage-${kind === "model" ? "model" : "plugin"}-chart-detail`).innerHTML =
+              chartDetailHtml(items[Number(button.dataset.seriesIndex)], kind, metric, total);
+          });
+        });
+      }
+
+      function prepareUsageCanvas(config) {
+        const canvas = $(config.canvasId);
+        if (!canvas || canvas.parentElement.hidden) return null;
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) { state[config.slotsKey] = []; return null; }
         const ratio = Math.min(window.devicePixelRatio || 1, 2);
         canvas.width = Math.round(rect.width * ratio);
         canvas.height = Math.round(rect.height * ratio);
+        canvas.tabIndex = 0;
         const context = canvas.getContext("2d");
         context.scale(ratio, ratio);
-        const width = rect.width;
-        const height = rect.height;
-        const padding = { top: 26, right: 16, bottom: 34, left: 56 };
+        context.font = '11px "Segoe UI", "Microsoft YaHei UI", sans-serif';
+        context.textBaseline = "middle";
+        return {canvas, context, width: rect.width, height: rect.height};
+      }
+
+      function drawPie(config) {
+        const prepared = prepareUsageCanvas(config);
+        if (!prepared) return;
+        const {canvas, context, width, height} = prepared;
+        const items = config.items.filter(item => chartValue(item, config.metric) > 0);
+        const total = items.reduce((sum, item) => sum + chartValue(item, config.metric), 0);
+        state[config.slotsKey] = [];
+        context.fillStyle = "#61706a";
+        context.textAlign = "center";
+        if (!total) {
+          const empty = config.metric === "tokens" ? "暂无已记录 Token，无法计算占比" : "暂无已核算付费金额，无法计算消费占比";
+          context.fillText(empty, width / 2, height / 2);
+          canvas.setAttribute("aria-label", empty);
+          return;
+        }
+        context.fillText(`合计 ${config.metric === "tokens" ? `${formatInteger(total)} Token` : chartMoney(total)} · ${items.length} 项`, width / 2, 14);
+        const cx = width / 2, cy = height / 2 + 8;
+        const radius = Math.max(20, Math.min(width / 2 - 24, height / 2 - 32));
+        let angle = -Math.PI / 2;
+        const slots = [];
+        items.forEach(item => {
+          const end = angle + chartValue(item, config.metric) / total * Math.PI * 2;
+          context.beginPath();
+          context.moveTo(cx, cy);
+          context.arc(cx, cy, radius, angle, end);
+          context.closePath();
+          context.fillStyle = chartColor(item.key, config.kind);
+          context.fill();
+          context.strokeStyle = "#fff";
+          context.lineWidth = 1;
+          context.stroke();
+          const mid = (angle + end) / 2;
+          slots.push({item, angle0: angle, angle1: end, cx, cy, radius,
+            centerX: cx + Math.cos(mid) * radius * 0.65, topY: cy + Math.sin(mid) * radius * 0.65, total});
+          angle = end;
+        });
+        state[config.slotsKey] = slots;
+        canvas.setAttribute("aria-label", `${config.kind === "model" ? "模型" : "插件"}${config.metric === "tokens" ? "Token" : "消费金额"}占比饼图，${items.length} 项，合计 ${config.metric === "tokens" ? formatInteger(total) : chartMoney(total)}`);
+      }
+
+      function drawBars(config) {
+        const prepared = prepareUsageCanvas(config);
+        if (!prepared) return;
+        const {canvas, context, width, height} = prepared;
+        const items = (config.items || []).slice();
+        const padding = { top: 28, right: 16, bottom: config.angledLabels ? 84 : 34, left: 68 };
         const plotWidth = width - padding.left - padding.right;
         const plotHeight = height - padding.top - padding.bottom;
         context.clearRect(0, 0, width, height);
@@ -2370,9 +2462,10 @@
           const value = pick(item);
           return value == null || !Number.isFinite(Number(value)) ? 0 : Number(value);
         });
-        const primaries = valuesOf(config.primary);
+        const primaries = config.stacked ? items.map(item =>
+          (item.models || []).reduce((sum, model) => sum + chartValue(model, config.metric), 0)) : valuesOf(config.primary);
         const secondaries = config.secondary ? valuesOf(config.secondary) : null;
-        const maximum = Math.max(...primaries, ...(secondaries || []), 0.01) * 1.15;
+        const maximum = Math.max(...primaries, ...(secondaries || []), config.tokenAxis ? 1 : 0.000001) * 1.15;
         context.strokeStyle = "#e2e8e5";
         context.fillStyle = "#68756f";
         context.lineWidth = 1;
@@ -2383,7 +2476,9 @@
           context.lineTo(width - padding.right, y);
           context.stroke();
           context.textAlign = "right";
-          context.fillText(`¥${(maximum * (1 - index / 4)).toFixed(2)}`, padding.left - 8, y);
+          const tick = maximum * (1 - index / 4);
+          context.fillText(config.tokenAxis ? (tick >= 10000 ? `${(tick / 10000).toFixed(1)}万` : formatInteger(Math.round(tick)))
+            : chartMoney(tick), padding.left - 8, y);
         }
         const slotWidth = plotWidth / items.length;
         const barWidth = Math.max(
@@ -2392,35 +2487,60 @@
         );
         const baseline = padding.top + plotHeight;
         const slots = [];
+        const points = [];
         const labelStep = Math.max(1, Math.ceil(items.length / 12));
         items.forEach((item, index) => {
           const centerX = padding.left + slotWidth * (index + 0.5);
           const bars = [];
-          if (secondaries) {
+          if (config.stacked) {
+            let accumulated = 0;
+            for (const model of (item.models || [])) {
+              const value = chartValue(model, config.metric);
+              if (value <= 0) continue;
+              const top = baseline - plotHeight * (accumulated + value) / maximum;
+              const bottom = baseline - plotHeight * accumulated / maximum;
+              context.fillStyle = chartColor(model.key);
+              context.fillRect(centerX - barWidth / 2, top, barWidth, bottom - top);
+              slots.push({x0: centerX - barWidth / 2, x1: centerX + barWidth / 2,
+                y0: top, y1: bottom, centerX, topY: top, item: model, period: item.key,
+                total: primaries[index]});
+              accumulated += value;
+            }
+          } else if (secondaries) {
             bars.push({ value: primaries[index], color: BAR_ACTUAL, x: centerX - barWidth - 1 });
             bars.push({ value: secondaries[index], color: BAR_ESTIMATE, x: centerX + 1 });
           } else {
-            bars.push({ value: primaries[index], color: BAR_ACTUAL, x: centerX - barWidth / 2 });
+            bars.push({ value: primaries[index], color: config.kind ? chartColor(item.key, config.kind) : BAR_ACTUAL, x: centerX - barWidth / 2 });
           }
           let topY = baseline;
           for (const bar of bars) {
             if (bar.value <= 0) continue;
             const barY = baseline - plotHeight * (bar.value / maximum);
             context.fillStyle = bar.color;
-            context.fillRect(bar.x, barY, barWidth, baseline - barY);
+            if (!config.line) context.fillRect(bar.x, barY, barWidth, baseline - barY);
             topY = Math.min(topY, barY);
           }
-          slots.push({
+          points.push({x: centerX, y: baseline - plotHeight * primaries[index] / maximum, item});
+          if (!config.stacked) slots.push({
             x0: padding.left + slotWidth * index,
             x1: padding.left + slotWidth * (index + 1),
             centerX,
             topY,
-            item
+            item, total: primaries.reduce((sum, value) => sum + value, 0)
           });
           if (index % labelStep === 0 || index === items.length - 1) {
             context.fillStyle = "#68756f";
-            context.textAlign = "center";
-            context.fillText(config.label ? config.label(item) : "", centerX, baseline + 14);
+            context.save();
+            if (config.angledLabels) {
+              context.translate(centerX, baseline + 14);
+              context.rotate(-Math.PI / 4);
+              context.textAlign = "right";
+              context.fillText(config.label ? config.label(item) : "", 0, 0);
+            } else {
+              context.textAlign = "center";
+              context.fillText(config.label ? config.label(item) : "", centerX, baseline + 14);
+            }
+            context.restore();
           }
         });
         context.textAlign = "left";
@@ -2482,20 +2602,27 @@
 
       function drawHourlyChart() {
         if (!state.usage) return;
-        const compareBalance = Boolean(state.usage.balance?.available);
         drawBars({
           canvasId: "#usage-hour-chart",
           slotsKey: "hourlySlots",
-          items: (state.usage.byHour || []).slice().reverse(),
-          primary: item => compareBalance ? item.balanceConsumed : Number(item.totalTokens || 0),
-          primaryLabel: compareBalance ? "账户余额实测" : "Token 用量",
-          secondary: compareBalance ? item => Number(item.accountAmountCny || 0) : null,
-          secondaryLabel: "账户估算",
-          tokenAxis: !compareBalance,
-          label: item => String(item.hour || "").slice(0, 2),
+          items: modelPeriodItems("hour"),
+          stacked: true, metric: state.usageModelMetric,
+          primaryLabel: state.usageModelMetric === "tokens" ? "Token 用量 · 按模型堆叠" : "消费金额 · 按模型堆叠",
+          tokenAxis: state.usageModelMetric === "tokens",
+          label: item => String(item.key || "").slice(-2) + ":00",
           emptyText: "当前范围没有小时数据",
-          aria: count => `按小时${compareBalance ? "DeepSeek 账户消费" : "Token 用量"}柱状图，共 ${count} 个小时`
+          aria: count => `按小时${state.usage.filters?.model ? "单色" : "模型堆叠"}柱状图，${count} 个小时，${state.usageModelMetric === "tokens" ? "Token 用量" : "消费金额"}`
         });
+      }
+
+      function modelPeriodItems(granularity) {
+        const series = state.usage[granularity === "hour" ? "byHourModel" : "byDayModel"];
+        if (series) return series.slice().sort((a, b) => a.key.localeCompare(b.key)).map(item =>
+          ({...item, models: item.models.slice().sort((a, b) => a.key.localeCompare(b.key))}));
+        // 升级窗口兼容旧 API；刷新后由完整模型时间汇总替换，不借分页明细推算。
+        return (state.usage[granularity === "hour" ? "byHour" : "byDay"] || []).slice().reverse().map(item =>
+          ({key: item.key, models: [{...item, key: state.usage.filters?.model || "全部模型",
+            knownAmountCny: item.knownAmountCny ?? item.amountCny}]}));
       }
 
       function drawDailyChart() {
@@ -2503,46 +2630,84 @@
         drawBars({
           canvasId: "#usage-day-chart",
           slotsKey: "dailySlots",
-          items: (state.usage.byDay || []).slice().reverse(),
-          primary: item => Number(item.totalTokens || 0),
-          primaryLabel: "Token 用量",
-          tokenAxis: true,
+          items: modelPeriodItems("day"),
+          stacked: true, metric: state.usageModelMetric,
+          primaryLabel: state.usageModelMetric === "tokens" ? "Token 用量 · 按模型堆叠" : "消费金额 · 按模型堆叠",
+          tokenAxis: state.usageModelMetric === "tokens",
           secondary: null,
           maxBarWidth: 64,
           label: item => String(item.key || "").slice(5),
           emptyText: "当前范围没有每日数据",
-          aria: count => `按日消费柱状图，共 ${count} 天`
+          aria: count => `按日${state.usage.filters?.model ? "单色" : "模型堆叠"}柱状图，${count} 天，${state.usageModelMetric === "tokens" ? "Token 用量" : "消费金额"}`
         });
       }
 
-      function bindBarHover(canvasId, tooltipId, slotsKey, render) {
+      function drawModelPie() {
+        if (!state.usage || state.usageGranularity !== "pie") return;
+        drawPie({canvasId: "#usage-model-pie", slotsKey: "modelPieSlots",
+          items: state.usage.byModel || [], metric: state.usageModelMetric, kind: "model"});
+      }
+
+      function bindUsageChart(canvasId, tooltipId, slotsKey, kind) {
         const canvas = $(canvasId);
         const tooltip = $(tooltipId);
         if (!canvas || !tooltip) return;
-        canvas.addEventListener("mousemove", event => {
+        let keyboardIndex = -1;
+        const reveal = slot => {
+          const metric = kind === "model" ? state.usageModelMetric : state.usagePluginMetric;
+          const html = chartDetailHtml(slot.item, kind, metric, slot.total, slot.period);
+          $(`#usage-${kind}-chart-detail`).innerHTML = html;
+          tooltip.innerHTML = html;
+          tooltip.hidden = false;
+          const wrapper = canvas.parentElement;
+          const left = slot.centerX + canvas.offsetLeft - wrapper.scrollLeft;
+          const half = tooltip.offsetWidth / 2 + 8;
+          tooltip.style.left = `${Math.max(half, Math.min(left, wrapper.clientWidth - half))}px`;
+          tooltip.style.top = `${Math.max(tooltip.offsetHeight + 8, Math.min(slot.topY, wrapper.clientHeight - 8))}px`;
+        };
+        const hit = event => {
           const slots = state[slotsKey] || [];
           if (!slots.length) return;
           const rect = canvas.getBoundingClientRect();
           const offsetX = event.clientX - rect.left;
-          const slot = slots.find(entry => offsetX >= entry.x0 && offsetX < entry.x1);
+          const offsetY = event.clientY - rect.top;
+          const slot = slots.find(entry => {
+            if (entry.radius) {
+              const dx = offsetX - entry.cx, dy = offsetY - entry.cy;
+              if (Math.hypot(dx, dy) > entry.radius) return false;
+              let angle = Math.atan2(dy, dx);
+              if (angle < -Math.PI / 2) angle += Math.PI * 2;
+              return angle >= entry.angle0 && angle < entry.angle1;
+            }
+            return offsetX >= entry.x0 && offsetX < entry.x1 &&
+              (entry.y0 == null || offsetY >= entry.y0 && offsetY <= entry.y1);
+          });
           if (!slot) {
             tooltip.hidden = true;
             return;
           }
-          tooltip.innerHTML = render(slot.item);
-          tooltip.hidden = false;
-          const boundWidth = canvas.parentElement.getBoundingClientRect().width;
-          tooltip.style.left = `${Math.min(Math.max(slot.centerX, 100), Math.max(100, boundWidth - 100))}px`;
-          tooltip.style.top = `${Math.max(slot.topY - 10, 148)}px`;
+          reveal(slot);
+        };
+        canvas.addEventListener("pointermove", hit);
+        canvas.addEventListener("pointerdown", hit);
+        canvas.addEventListener("keydown", event => {
+          const slots = state[slotsKey] || [];
+          if (event.key === "Escape") { tooltip.hidden = true; return; }
+          if (!slots.length || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          keyboardIndex = event.key === "Home" ? 0 : event.key === "End" ? slots.length - 1
+            : (keyboardIndex + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1) + slots.length) % slots.length;
+          reveal(slots[keyboardIndex]);
         });
-        canvas.addEventListener("mouseleave", () => {
-          tooltip.hidden = true;
-        });
+        canvas.addEventListener("pointerleave", () => { tooltip.hidden = true; });
+        canvas.addEventListener("blur", () => { tooltip.hidden = true; });
       }
 
       function bindHourlyHover() {
-        bindBarHover("#usage-hour-chart", "#usage-hour-tooltip", "hourlySlots", hourlyTooltipHtml);
-        bindBarHover("#usage-day-chart", "#usage-day-tooltip", "dailySlots", dailyTooltipHtml);
+        bindUsageChart("#usage-hour-chart", "#usage-hour-tooltip", "hourlySlots", "model");
+        bindUsageChart("#usage-day-chart", "#usage-day-tooltip", "dailySlots", "model");
+        bindUsageChart("#usage-model-pie", "#usage-model-pie-tooltip", "modelPieSlots", "model");
+        bindUsageChart("#usage-plugin-chart", "#usage-plugin-tooltip", "pluginSlots", "plugin");
       }
 
       function setUsageView(mode) {
@@ -2552,10 +2717,18 @@
         });
         $("#usage-plugin-table-wrap").hidden = mode !== "table";
         $("#usage-plugin-chart-wrap").hidden = mode === "table";
+        $("#usage-plugin-legend").hidden = mode === "table";
+        $("#usage-plugin-chart-note").hidden = mode === "table";
+        $("#usage-plugin-chart-detail").hidden = mode === "table";
+        $("#usage-plugin-tooltip").hidden = true;
         if (mode !== "table") window.requestAnimationFrame(drawPluginChart);
       }
 
       function setUsageGranularity(mode) {
+        if (mode === "pie" && state.usageGranularity !== "pie") {
+          state.usageModelMetric = "amount";
+          $("#usage-model-metric").value = "amount";
+        }
         state.usageGranularity = mode;
         $$("[data-usage-granularity]").forEach(button => {
           button.setAttribute(
@@ -2567,7 +2740,7 @@
       }
 
       function usageGroupAmount(item) {
-        const amount = item.pricedCalls ? formatAmounts(item) : '<span class="table-status warn">费用待确认</span>';
+        const amount = item.pricedCalls || item.aggregateRecords ? formatAmounts(item) : '<span class="table-status warn">费用待确认</span>';
         const unknown = Number(item.unknownUsageCalls) || 0;
         const pending = Number(item.missingPriceCalls) || 0;
         return amount +
@@ -2590,7 +2763,7 @@
         usageTokenSplit.textContent = usageFreeCalls
           ? `计费 ${formatInteger(summary.billedTokens)} · 免费 ${formatInteger(usageFreeTokens)}`
           : usageTokenDetail;
-        $("#usage-amount").textContent = summary.pricedCalls
+        $("#usage-amount").textContent = summary.pricedCalls || summary.aggregateRecords
           ? formatAmounts(summary)
           : "费用待确认";
         const usageBalance = data.balance || {};
@@ -2602,6 +2775,8 @@
             usageNote += ` · 无记录扣费 ¥${usageBalance.unattributed}`;
           }
           if (usageFreeCalls) usageNote += `；免费 ${formatInteger(usageFreeCalls)} 次`;
+        } else if (data.reconciliation) {
+          usageNote = "日总含已计量用量与账单补录";
         } else if (summary.unknownUsageCalls) {
           usageNote = "估算仅包含已返回的用量";
         } else if (summary.missingPriceCalls) {
@@ -2613,13 +2788,30 @@
         }
         // 独立提示缺失用量，余额可用时也不隐藏；未知不能当作零费用。
         if (summary.unknownUsageCalls) {
-          usageNote += ` · ${formatInteger(summary.unknownUsageCalls)} 次用量未完整返回，实际费用待确认`;
+          usageNote += data.reconciliation
+            ? ` · ${formatInteger(summary.unknownUsageCalls)} 次请求缺少逐笔用量，汇总补录不代表逐笔恢复`
+            : ` · ${formatInteger(summary.unknownUsageCalls)} 次用量未完整返回，实际费用待确认`;
         }
         if (summary.missingPriceCalls) {
           usageNote += ` · ${formatInteger(summary.missingPriceCalls)} 次调用待配置单价`;
         }
         if (summary.requestAttempts) {
           usageNote += ` · 已采集 ${formatInteger(summary.requestAttempts)} 次供应商请求尝试`;
+        }
+        if (data.reconciliation) {
+          usageNote += ` · ${data.reconciliation.note}`;
+        }
+        const monitoring = data.usageMonitoring;
+        if (monitoring) {
+          usageNote += monitoring.mode === "journal"
+            ? ` · 向量逐笔计量持续同步（${formatInteger(monitoring.syncLagSeconds)} 秒前）`
+            : " · 向量累计用量持续同步";
+          if (!monitoring.ok || monitoring.stale || monitoring.pendingStale || monitoring.counterMismatch) {
+            usageNote += " · 计量同步异常，请检查监控服务";
+          }
+          if (monitoring.unknownUpstreamRequests) {
+            usageNote += ` · 新流水有 ${formatInteger(monitoring.unknownUpstreamRequests)} 次上游用量未知`;
+          }
         }
         // DeepSeek 的联网搜索按次收费、不消耗 token，单独挂一行才解释得通金额差
         const usageSearch = data.search || {};
@@ -2647,10 +2839,17 @@
         const usageGranularity = state.usageGranularity || "day";
         const usageDayHead = $("#usage-day-head");
         const usageDayBody = $("#usage-day-table");
+        renderSeriesLegend("#usage-model-legend", data.byModel || [], "model", state.usageModelMetric);
+        $("#usage-model-pie-wrap").hidden = usageGranularity !== "pie";
+        $("#usage-model-pie-tooltip").hidden = true;
+        $("#usage-day-tooltip").hidden = true;
+        $("#usage-model-chart-detail").innerHTML = "悬停、点按图形或点击图例查看对应模型的费用、Token 和调用详情；方向键也可查看。";
+        $("#usage-plugin-chart-detail").innerHTML = "悬停、点按图形或点击图例查看插件消费详情。";
+        const metricNote = chartScopeNote(state.usageModelMetric);
         if (usageGranularity === "hour") {
           const hourlyRanges = ["today", "yesterday", "24h"];
           const hourSupported = hourlyRanges.includes(data.range);
-          $("#usage-day-title").textContent = data.balance?.available ? "DeepSeek 账户每小时消费" : "每小时模型用量";
+          $("#usage-day-title").textContent = "每小时模型用量";
           $("#usage-day-table-wrap").hidden = true;
           $("#usage-day-chart-wrap").hidden = true;
           $("#usage-day-tooltip").hidden = true;
@@ -2658,14 +2857,20 @@
           $("#usage-hour-unsupported").hidden = hourSupported;
           $("#usage-hour-tooltip").hidden = true;
           if (hourSupported) {
-            const hasBalance = (data.byHour || []).some(item => item.balanceConsumed != null);
-            $("#usage-day-note").textContent = hasBalance
-              ? "账户实测与全连接估算对比；悬停 Token 为当前筛选模型用量"
-              : "当前筛选模型的 Token 用量 · 悬停查看金额与明细";
+            $("#usage-day-note").textContent = `${data.filters?.model ? "单个模型单色柱图" : "各颜色代表实际模型，按小时堆叠"} · ${metricNote}${data.reconciliation ? " · 无逐笔时间的汇总补录不计入小时图。" : ""}`;
             window.requestAnimationFrame(drawHourlyChart);
           } else {
             $("#usage-day-note").textContent = "按小时仅支持今日 / 昨日 / 最近 24 小时";
           }
+        } else if (usageGranularity === "pie") {
+          $("#usage-day-title").textContent = "模型消费占比";
+          $("#usage-day-note").textContent = `${metricNote}${data.reconciliation ? " · 包含当前范围的汇总补录。" : ""}`;
+          $("#usage-day-table-wrap").hidden = true;
+          $("#usage-day-chart-wrap").hidden = true;
+          $("#usage-hour-chart-wrap").hidden = true;
+          $("#usage-hour-unsupported").hidden = true;
+          $("#usage-hour-tooltip").hidden = true;
+          window.requestAnimationFrame(drawModelPie);
         } else {
           $("#usage-day-table-wrap").hidden = false;
           $("#usage-day-chart-wrap").hidden = false;
@@ -2673,7 +2878,7 @@
           $("#usage-hour-unsupported").hidden = true;
           $("#usage-hour-tooltip").hidden = true;
           $("#usage-day-title").textContent = "每日模型用量";
-          $("#usage-day-note").textContent = "北京时间自然日 · 非供应商账单 · 悬停柱体查看明细";
+          $("#usage-day-note").textContent = `北京时间自然日 · ${data.filters?.model ? "单个模型单色柱图" : "各颜色代表实际模型，按日堆叠"} · ${metricNote}`;
           window.requestAnimationFrame(drawDailyChart);
           usageDayHead.innerHTML =
             '<tr><th>日期</th><th class="numeric">调用</th><th class="numeric">普通输入</th><th class="numeric">缓存输入</th><th class="numeric">输出</th><th class="numeric">Token 合计</th><th class="numeric">估算费用（元）</th><th class="numeric">p95 延迟</th><th class="numeric">失败</th></tr>';
@@ -2717,6 +2922,7 @@
             <td class="numeric">${usageGroupAmount(item)}</td>
           </tr>`).join("") || '<tr><td colspan="8"><div class="empty">当前筛选范围没有模型用量。</div></td></tr>';
         $("#usage-detail-table").innerHTML = (data.details || []).map(item => {
+          const aggregate = Boolean(item.record_type);
           const statusKind = item.status === "completed" ? "good" : "bad";
           const price = item.price_status === "usage_unknown"
             ? '<span class="table-status warn">用量未知 · 费用待确认</span>'
@@ -2724,22 +2930,26 @@
               ? '<span class="table-status warn">待配置单价</span>'
               : formatMoney(item.amount, "CNY") +
                 (item.price_status === "free" ? "<br><small>免费</small>" : "") +
+                (item.price_status === "reconciled" ? "<br><small>官方账单差额</small>" : "") +
                 (item.free_tokens > 0 && item.price_status !== "free" ? `<br><small>额度抵扣 ${formatInteger(item.free_tokens)} Token</small>` : "") +
                 (item.price_status === "partial_usage" ? "<br><small>已知部分；其余待确认</small>" : "");
           const requestCount = (item.request_details || []).length;
           const actualModels = [...new Set((item.request_details || []).map(r => r.model).filter(Boolean))];
           const modelLabel = actualModels.length ? actualModels.join(" / ") : item.model === "automatic" ? "automatic（实际模型未知）" : item.model;
-          const attempts = requestCount ? `<br><small>${formatInteger(requestCount)} 次请求尝试${item.unknown_requests ? `，${formatInteger(item.unknown_requests)} 次用量未知` : ""}</small>` : "";
+          let attempts = requestCount ? `<br><small>${formatInteger(requestCount)} 次请求尝试${item.unknown_requests ? `，${formatInteger(item.unknown_requests)} 次用量未知` : ""}</small>` : "";
+          if (item.cache_info) {
+            attempts += `<br><small>缓存命中 ${formatInteger(item.cache_info.hits)} · 合并等待 ${formatInteger(item.cache_info.coalesced)} · 新输入 ${formatInteger(item.cache_info.misses)}</small>`;
+          }
           return `
             <tr>
-              <td>${escapeHtml(new Date(item.started_at * 1000).toLocaleString("zh-CN", { hour12: false }))}</td>
+              <td>${aggregate ? `${escapeHtml(item.day)}<br><small>汇总记录 · 非逐笔时间</small>` : escapeHtml(new Date(item.started_at * 1000).toLocaleString("zh-CN", { hour12: false }))}</td>
               <td><strong>${escapeHtml(pluginLabel(item.plugin_id))}</strong>${item.historical ? '<br><small>历史数据</small>' : ""}</td>
-              <td class="route-cell" title="${escapeHtml(item.route)}">${escapeHtml(item.route)}</td>
+              <td class="route-cell" title="${escapeHtml(item.note || item.route)}">${escapeHtml(aggregate ? item.note : item.route)}</td>
               <td>${escapeHtml(modelLabel)}<br><small>${escapeHtml(item.provider_id)} · ${item.call_kind === "embedding" ? "向量化" : "对话"}</small></td>
               <td class="numeric"><strong>${formatInteger(item.total_tokens)}</strong><br><small>${formatInteger(item.token_input_other)} / ${formatInteger(item.token_input_cached)} / ${formatInteger(item.token_output)}</small></td>
               <td class="numeric">${price}</td>
-              <td class="numeric">${formatDuration(item.latency_ms)}${item.ttft_ms == null ? "" : `<br><small>TTFT ${formatDuration(item.ttft_ms)}</small>`}</td>
-              <td><span class="table-status ${statusKind}">${escapeHtml(item.status)}</span><br><small>${escapeHtml(item.source)}</small>${attempts}</td>
+              <td class="numeric">${aggregate ? "--" : formatDuration(item.latency_ms)}${item.ttft_ms == null ? "" : `<br><small>TTFT ${formatDuration(item.ttft_ms)}</small>`}</td>
+              <td><span class="table-status ${statusKind}">${aggregate ? "汇总补录" : escapeHtml(item.status)}</span><br><small>${escapeHtml(item.source)}</small>${attempts}</td>
             </tr>`;
         }).join("") ||
           '<tr><td colspan="8"><div class="empty">当前筛选范围没有调用明细。</div></td></tr>';
@@ -2756,18 +2966,22 @@
           ? new Date(data.collection.installedAt * 1000).toLocaleString("zh-CN", { hour12: false })
           : "尚未启用";
         $("#usage-quality-note").textContent =
-          `插件级采集启用时间：${installed}。记录对话、OpenAI/DashScope 向量化和 API 路由实际模型用量；跨模型重试的涉及调用数不能直接相加，Token 可相加。旧 automatic 记录保留总量，实际模型未知；此前漏采的向量化用量无法追溯。未配置单价仍显示 Token，费用待确认。取消、失败或重启可能造成用量缺口；独立插件客户端可能不在采集范围内。报表不保存提示词、回复正文或用户标识。`;
+          `插件级采集启用时间：${installed}。记录对话、OpenAI/DashScope 向量化和 API 路由实际模型用量；跨模型重试的涉及调用数不能直接相加，Token 可相加。共享向量缓存以持久化流水计量，缓存命中与合并等待不新增上游消费；未知不等于免费。历史缺失按已有累计证据补录，不推断逐笔 Token、插件或小时。独立插件客户端可能不在采集范围内。报表不保存提示词、回复正文或用户标识。`;
         $("#export-usage").href = `/api/usage-export.csv?${usageQuery(false).toString()}`;
         if (state.usageView !== "table") window.requestAnimationFrame(drawPluginChart);
       }
 
       async function loadUsage() {
+        const requestId = state.usageRequestId = (state.usageRequestId || 0) + 1;
         const button = $("#refresh-usage");
         button.disabled = true;
         $("#usage-detail-count").textContent = "正在读取调用明细…";
         try {
-          renderUsage(await getJson(`/api/usage-report?${usageQuery().toString()}`));
+          const data = await getJson(`/api/usage-report?${usageQuery().toString()}`);
+          if (requestId !== state.usageRequestId) return;
+          renderUsage(data);
         } catch (error) {
+          if (requestId !== state.usageRequestId) return;
           $("#usage-day-table").innerHTML =
             `<tr><td colspan="9"><div class="empty">每日消费读取失败：${escapeHtml(error.message)}</div></td></tr>`;
           $("#usage-plugin-table").innerHTML =
@@ -2775,8 +2989,11 @@
           $("#usage-detail-table").innerHTML =
             '<tr><td colspan="8"><div class="empty">无法读取调用明细。</div></td></tr>';
           $("#usage-detail-count").textContent = "读取失败";
+          $("#usage-day-note").textContent = `图表读取失败：${error.message}`;
+          $("#usage-model-chart-detail").textContent = "当前图表为上次成功结果，请刷新重试。";
+          $("#usage-plugin-chart-detail").textContent = "当前图表为上次成功结果，请刷新重试。";
         } finally {
-          button.disabled = false;
+          if (requestId === state.usageRequestId) button.disabled = false;
         }
       }
 
@@ -2826,6 +3043,19 @@
             label.htmlFor = control.id;
           }
         });
+        if (config.line) {
+          context.beginPath();
+          context.strokeStyle = BAR_ACTUAL;
+          context.lineWidth = 2;
+          points.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y));
+          context.stroke();
+          for (const point of points) {
+            context.beginPath();
+            context.arc(point.x, point.y, 4, 0, Math.PI * 2);
+            context.fillStyle = chartColor(point.item.key, config.kind);
+            context.fill();
+          }
+        }
       }
 
       function priceEntry(item = {}) {
@@ -2848,7 +3078,8 @@
             <div class="field">
               <label>计价模式</label>
               <select data-price-field="pricingMode">
-                <option value="flat" ${item.pricingMode === "deepseek_peak" ? "" : "selected"}>固定单价</option>
+                <option value="flat" ${!item.pricingMode || item.pricingMode === "flat" ? "selected" : ""}>固定单价</option>
+                <option value="embedding" ${item.pricingMode === "embedding" ? "selected" : ""}>向量模型：文本 / Batch File</option>
                 <option value="deepseek_peak" ${item.pricingMode === "deepseek_peak" ? "selected" : ""}>DeepSeek 标准 / 优惠时段</option>
               </select>
             </div>
@@ -2880,9 +3111,11 @@
             </div>
             <div class="field full flat-price-fields">
               <div class="form-grid">
-                <div class="field"><label>普通输入 / 百万 Token</label><input data-price-field="inputOtherCnyPerMillion" inputmode="decimal" value="${escapeHtml(item.inputOtherCnyPerMillion || "")}" placeholder="待配置"></div>
+                <div class="field"><label class="input-price-label">普通输入 / 百万 Token</label><input data-price-field="inputOtherCnyPerMillion" inputmode="decimal" value="${escapeHtml(item.inputOtherCnyPerMillion || "")}" placeholder="待配置"></div>
+                <div class="field batch-file-price-field" hidden><label>向量输入（Batch File）/ 百万 Token</label><input data-price-field="inputBatchCnyPerMillion" inputmode="decimal" value="${escapeHtml(item.inputBatchCnyPerMillion || "")}" placeholder="待配置"></div>
                 <div class="field"><label>缓存输入 / 百万 Token</label><input data-price-field="inputCachedCnyPerMillion" inputmode="decimal" value="${escapeHtml(item.inputCachedCnyPerMillion || "")}" placeholder="待配置"></div>
                 <div class="field"><label>输出 / 百万 Token</label><input data-price-field="outputCnyPerMillion" inputmode="decimal" value="${escapeHtml(item.outputCnyPerMillion || "")}" placeholder="待配置"></div>
+                <div class="field full embedding-price-note" hidden><small>文本输入用于实时向量请求；Batch File 仅用于文件批量任务，一次提交多条文本仍按文本价计费。向量无输出 Token 计费。</small></div>
               </div>
             </div>
             <div class="field full scheduled-price-fields">
@@ -2900,8 +3133,15 @@
           </div>`;
         const updateMode = () => {
           const scheduled = $("[data-price-field=pricingMode]", wrapper).value === "deepseek_peak";
+          const embedding = $("[data-price-field=pricingMode]", wrapper).value === "embedding";
           $(".flat-price-fields", wrapper).hidden = scheduled;
           $(".scheduled-price-fields", wrapper).hidden = !scheduled;
+          $(".batch-file-price-field", wrapper).hidden = !embedding;
+          $(".embedding-price-note", wrapper).hidden = !embedding;
+          $(".input-price-label", wrapper).textContent = embedding ? "文本输入 / 百万 Token" : "普通输入 / 百万 Token";
+          for (const field of ["inputCachedCnyPerMillion", "outputCnyPerMillion"]) {
+            $(`[data-price-field=${field}]`, wrapper).closest(".field").hidden = embedding;
+          }
           // 峰谷价也是人民币，不再自动切成 USD。
           $("[data-price-field=currency]", wrapper).value = "CNY";
         };
@@ -2910,14 +3150,23 @@
           const provider = $("[data-price-field=providerId]", wrapper).value.trim();
           $("summary strong", wrapper).textContent = model || "新价格版本";
           const scheduled = $("[data-price-field=pricingMode]", wrapper).value === "deepseek_peak";
+          const embedding = $("[data-price-field=pricingMode]", wrapper).value === "embedding";
           const fields = scheduled
             ? ["inputOtherOffPeakPerMillion", "inputCachedOffPeakPerMillion", "outputOffPeakPerMillion"]
             : ["inputOtherCnyPerMillion", "inputCachedCnyPerMillion", "outputCnyPerMillion"];
           const rates = fields.map(field => $(`[data-price-field=${field}]`, wrapper).value.trim() || "待配置");
-          $(".price-summary", wrapper).textContent = `${pricingModelKind(model)} · ${provider || "同名模型"} · ${scheduled ? "标准 / 优惠时段；优惠价 " : ""}输入 / 缓存 / 输出：${rates.join(" / ")} 元 / 百万 Token${freeNote ? " · " + freeNote : ""}`;
+          const priceText = embedding
+            ? `文本输入：${rates[0]}；向量输入（Batch File）：${$("[data-price-field=inputBatchCnyPerMillion]", wrapper).value.trim() || "待配置"} 元 / 百万 Token`
+            : `${scheduled ? "标准 / 优惠时段；优惠价 " : ""}输入 / 缓存 / 输出：${rates.join(" / ")} 元 / 百万 Token`;
+          $(".price-summary", wrapper).textContent = `${pricingModelKind(model)} · ${provider || "同名模型"} · ${priceText}${freeNote ? " · " + freeNote : ""}`;
         };
         $("[data-price-field=model]", wrapper).addEventListener("change", event => {
           fillPricingProvider(event.target.value.trim(), $("[data-price-field=providerId]", wrapper));
+          if (!item.id && (state.usageModels?.models || []).some(p =>
+            p.model === event.target.value.trim() && p.kind === "embedding")) {
+            $("[data-price-field=pricingMode]", wrapper).value = "embedding";
+            updateMode();
+          }
           updateSummary();
         });
         wrapper.addEventListener("input", updateSummary);
@@ -2978,7 +3227,9 @@
         $("#price-history-list").innerHTML = (config.history || []).map(item =>
           `<p><strong>${escapeHtml(item.model)}</strong> · ${escapeHtml(item.effectiveFrom)} · 人民币 CNY<br>${escapeHtml(item.providerId || (item.providerIds || []).join(", ") || "同名模型")}<br>${item.pricingMode === "deepseek_peak"
             ? `优惠：普通输入 ${escapeHtml(item.inputOtherOffPeakPerMillion)} / 缓存 ${escapeHtml(item.inputCachedOffPeakPerMillion)} / 输出 ${escapeHtml(item.outputOffPeakPerMillion)}；标准：普通输入 ${escapeHtml(item.inputOtherPeakPerMillion)} / 缓存 ${escapeHtml(item.inputCachedPeakPerMillion)} / 输出 ${escapeHtml(item.outputPeakPerMillion)}`
-            : `普通输入 ${escapeHtml(item.inputOtherCnyPerMillion)} / 缓存 ${escapeHtml(item.inputCachedCnyPerMillion)} / 输出 ${escapeHtml(item.outputCnyPerMillion)}`}（元 / 百万 Token）</p>`
+            : item.pricingMode === "embedding"
+              ? `文本输入 ${escapeHtml(item.inputOtherCnyPerMillion)}；向量输入（Batch File）${escapeHtml(item.inputBatchCnyPerMillion)}`
+              : `普通输入 ${escapeHtml(item.inputOtherCnyPerMillion)} / 缓存 ${escapeHtml(item.inputCachedCnyPerMillion)} / 输出 ${escapeHtml(item.outputCnyPerMillion)}`}（元 / 百万 Token）</p>`
         ).join("") || "<p>没有历史版本。</p>";
         $("#add-price-entry").disabled =
           list.children.length >= (config.limits?.priceEntries || 100);
@@ -3020,6 +3271,9 @@
               modelAliases: value("modelAliases").split(",").map(s => s.trim()).filter(Boolean),
               effectiveFrom: new Date(value("effectiveFrom")).toISOString(),
               inputOtherCnyPerMillion: value("inputOtherCnyPerMillion"),
+              ...(value("pricingMode") === "embedding" || value("inputBatchCnyPerMillion") ? {
+                inputBatchCnyPerMillion: value("inputBatchCnyPerMillion"),
+              } : {}),
               inputCachedCnyPerMillion: value("inputCachedCnyPerMillion"),
               outputCnyPerMillion: value("outputCnyPerMillion"),
               inputOtherOffPeakPerMillion: value("inputOtherOffPeakPerMillion"),
@@ -3273,6 +3527,14 @@
         $("#add-free-quota").addEventListener("click", () => {
           if ($$(".free-quota-entry").length < 100) $("#free-quota-list").appendChild(freeQuotaEntry());
         });
+        $("#usage-model-metric").addEventListener("change", event => {
+          state.usageModelMetric = event.target.value;
+          if (state.usage) renderUsage(state.usage);
+        });
+        $("#usage-plugin-metric").addEventListener("change", event => {
+          state.usagePluginMetric = event.target.value;
+          if (state.usageView !== "table") window.requestAnimationFrame(drawPluginChart);
+        });
         $("#free-quota-list").addEventListener("click", event => {
           event.target.closest(".remove-free-quota")?.closest(".free-quota-entry").remove();
         });
@@ -3326,12 +3588,14 @@
           new ResizeObserver(() => drawPluginChart()).observe($("#usage-plugin-chart").parentElement);
           new ResizeObserver(() => drawHourlyChart()).observe($("#usage-hour-chart").parentElement);
           new ResizeObserver(() => drawDailyChart()).observe($("#usage-day-chart").parentElement);
+          new ResizeObserver(() => drawModelPie()).observe($("#usage-model-pie").parentElement);
         } else {
           window.addEventListener("resize", () => {
             drawResourceChart();
             drawPluginChart();
             drawHourlyChart();
             drawDailyChart();
+            drawModelPie();
           });
         }
         document.addEventListener("visibilitychange", () => {

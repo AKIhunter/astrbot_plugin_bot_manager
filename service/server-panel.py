@@ -450,6 +450,10 @@ def main():
         snapshot_store=server.metrics,
     )
     server.balance_sampler = MONITOR.BalanceSampler(server.balances, 60)
+    server.embedding_sampler = MONITOR.EmbeddingUsageSampler(
+        args.usage_db,
+        "/var/lib/astrbot/data/plugin_data/astrbot_plugin_livingmemory/embedding_cache.db",
+    )
     server.usage = MONITOR.UsageReportService(
         args.usage_db,
         args.astrbot_db,
@@ -466,10 +470,13 @@ def main():
     server.daemon_threads = True
     server.sampler.start()
     server.balance_sampler.start()
+    server.embedding_sampler.start()
     try:
         server.serve_forever()
     finally:
         server.sampler.stop()
+        server.balance_sampler.stop()
+        server.embedding_sampler.stop()
         server.server_close()
 
 

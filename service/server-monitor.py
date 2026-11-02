@@ -439,6 +439,45 @@ class BalanceSampler:
             self.stop_event.wait(max(1, self.interval_seconds - elapsed))
 
 
+class EmbeddingUsageSampler(ResourceSampler):
+    """以数据库所属用户导入已登记的网关累计用量，无需重启 AstrBot。"""
+
+    def __init__(self, usage_db, cache_db, interval_seconds=15):
+        self.usage_db = str(usage_db)
+        self.cache_db = str(cache_db)
+        super().__init__(None, None, interval_seconds)
+        self.thread.name = "embedding-usage-sampler"
+
+    def _run(self):
+        helper = Path(__file__).with_name("server-embedding-usage.py")
+        last_error = None
+        while not self.stop_event.is_set():
+            try:
+                command = [shutil.which("python3") or "python3", str(helper),
+                           "--usage-db", self.usage_db, "--cache-db", self.cache_db]
+                if os.geteuid() == 0:
+                    command = ["/usr/sbin/runuser", "-u", "astrbot", "--", *command]
+                result = subprocess.run(command, capture_output=True, text=True, timeout=12)
+                if result.returncode:
+                    raise RuntimeError(result.stderr.strip().splitlines()[-1][:200])
+                health = json.loads(result.stdout).get("health", {})
+                pending_stale = (health.get("oldestPendingAt") and
+                                 time.time() - health["oldestPendingAt"] > 120)
+                if health.get("unknownUpstreamRequests") or health.get("counterMismatch") or pending_stale:
+                    raise RuntimeError(
+                        f"journal usage needs attention: unknown={health.get('unknownUpstreamRequests', 0)}, "
+                        f"counterMismatch={health.get('counterMismatch', False)}"
+                    )
+                last_error = None
+            except Exception as exc:
+                # 同一异常只报一次，跨日/计数回退等待人工核对，避免累计重复入账。
+                error = str(exc)[:200]
+                if error != last_error:
+                    print(f"embedding usage sampler failed: {error}", flush=True)
+                last_error = error
+            self.stop_event.wait(self.interval_seconds)
+
+
 class UsageConfigError(ValueError):
     pass
 
@@ -881,6 +920,7 @@ class UsageReportService:
                 "holidayDates",
                 "providerIds",
                 "modelAliases",
+                "inputBatchCnyPerMillion",
                 *self.PRICE_FIELDS,
                 *self.SCHEDULE_PRICE_FIELDS,
             }
@@ -908,7 +948,7 @@ class UsageReportService:
                 32,
                 required=True,
             )
-            if pricing_mode not in {"flat", "deepseek_peak"}:
+            if pricing_mode not in {"flat", "deepseek_peak", "embedding"}:
                 raise UsageConfigError("pricingMode is unsupported")
             currency = self._text(
                 item.get("currency", "CNY"),
@@ -954,6 +994,11 @@ class UsageReportService:
                     "modelAliases": item["modelAliases"],
                     "pricingMode": pricing_mode,
                     "holidayDates": sorted(set(normalized_holidays)),
+                    **({
+                        "inputBatchCnyPerMillion": self._decimal(
+                            item.get("inputBatchCnyPerMillion", ""), "inputBatchCnyPerMillion",
+                        ),
+                    } if pricing_mode == "embedding" or "inputBatchCnyPerMillion" in item else {}),
                     **{
                         field: self._decimal(item.get(field, ""), field)
                         for field in self.PRICE_FIELDS
@@ -1109,9 +1154,38 @@ class UsageReportService:
                 """,
                 (cutoff, now),
             ).fetchall()
+            has_receipts = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='usage_reconciliations'"
+            ).fetchone()
+            receipts = {}
+            if has_receipts:
+                receipts = {row["call_id"]: dict(row) for row in connection.execute(
+                    "SELECT r.* FROM usage_reconciliations r JOIN usage_events e "
+                    "ON e.call_id=r.call_id WHERE e.started_at>=? AND e.started_at<=?",
+                    (cutoff, now))}
+            measurements = {}
+            if connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='usage_embedding_measurements'"
+            ).fetchone():
+                measurements = {r["call_id"]: json.loads(r["payload_json"]) for r in
+                                connection.execute(
+                                    "SELECT m.* FROM usage_embedding_measurements m "
+                                    "JOIN usage_events e ON e.call_id=m.call_id "
+                                    "WHERE e.started_at>=? AND e.started_at<=?", (cutoff, now))}
         events = []
         for row in rows:
             event = dict(row)
+            if event["call_id"] in measurements:
+                event.update(measurements[event["call_id"]])
+                event["request_details"] = json.dumps(event["request_details"])
+            if event["call_id"] in receipts:
+                receipt = receipts[event["call_id"]]
+                if receipt["period_start"] >= now:
+                    continue
+                event.update({key: receipt[key] for key in
+                              ("record_type", "note", "period_start", "period_end")})
+                event["fixed_amount_cny"] = receipt["amount_cny"]
+                event["latency_ms"] = None
             event["call_kind"] = event.get("call_kind") or "llm"
             if event["usage_known"] is None:
                 event["usage_known"] = any(
@@ -1133,6 +1207,22 @@ class UsageReportService:
             if self._matches(event, filters):
                 events.append(event)
         return events
+
+    def _usage_monitoring(self, now):
+        if not self.telemetry_db.exists():
+            return None
+        with closing(self._read_only(self.telemetry_db)) as connection:
+            row = connection.execute(
+                "SELECT value FROM metadata WHERE key='embedding_gateway_health_v1'"
+            ).fetchone()
+        if not row:
+            return None
+        health = json.loads(row["value"])
+        health["syncLagSeconds"] = max(0, round(now - health.get("lastSyncAt", 0)))
+        health["stale"] = health["syncLagSeconds"] > 90
+        health["pendingStale"] = bool(health.get("oldestPendingAt") and
+                                     now - health["oldestPendingAt"] > 120)
+        return health
 
     def _historical_events(self, cutoff, boundary, filters):
         if not self.astrbot_db.exists():
@@ -1218,6 +1308,8 @@ class UsageReportService:
         atoms = []
         for event in events:
             event["quota_free_tokens"] = 0
+            if event.get("record_type") == "official_billing_adjustment":
+                continue
             requests = event.get("request_details") or []
             measured = [r for r in requests if any(r.get(f, 0) for f in (
                 "token_input_other", "token_input_cached", "token_output"))]
@@ -1253,6 +1345,9 @@ class UsageReportService:
         return list(states.values())
 
     def _event_cost(self, event, prices):
+        if event.get("record_type") == "official_billing_adjustment":
+            # 官方差额金额固定，不因修改单价或额度而再次估算。
+            return event["fixed_amount_cny"], "CNY", "reconciled", None, "official"
         requests = event.get("request_details") or []
         measured = [
             item for item in requests
@@ -1275,6 +1370,8 @@ class UsageReportService:
                     usage_known=request.get("usage_known", False),
                     request_details=[],
                     quota_free_tokens=request.get("quota_free_tokens", 0),
+                    embedding_input_type=request.get("embedding_input_type")
+                    or event.get("embedding_input_type") or "text",
                 )
                 costs.append(self._event_cost(attempt, prices))
             if any(item[0] is None for item in costs) or len(
@@ -1304,6 +1401,9 @@ class UsageReportService:
             return None, None, "usage_unknown", None, None
         total_tokens = sum(int(event[f] or 0) for f in (
             "token_input_other", "token_input_cached", "token_output"))
+        if usage_known and total_tokens == 0 and event.get("measurement_source") == "livingmemory_journal":
+            # 共享缓存明确没有新增消费，不要求先配单价才能确认零费用。
+            return "0.00000000", "CNY", "free", None, "shared_cache"
         free_tokens = min(total_tokens, int(event.get("quota_free_tokens", 0)))
         if total_tokens and free_tokens == total_tokens:
             return "0.00000000", "CNY", "free" if usage_known else "partial_usage", None, "quota"
@@ -1326,7 +1426,18 @@ class UsageReportService:
             ),
         )
         price_band = "flat"
-        if price["pricingMode"] == "deepseek_peak":
+        if price["pricingMode"] == "embedding":
+            # 多条文本的实时请求仍是文本输入，只有明确标记的 Batch File 才用批量价。
+            input_type = event.get("embedding_input_type") or "text"
+            if input_type not in {"text", "batch_file"} or event.get("token_output"):
+                return None, None, "pending", price["id"], None
+            price_band = "embedding_batch_file" if input_type == "batch_file" else "embedding_text"
+            rate_field = "inputBatchCnyPerMillion" if input_type == "batch_file" else "inputOtherCnyPerMillion"
+            components = (
+                ("token_input_other", rate_field),
+                ("token_input_cached", rate_field),
+            )
+        elif price["pricingMode"] == "deepseek_peak":
             utc_time = datetime.fromtimestamp(event["started_at"], timezone.utc)
             local_date = utc_time.astimezone(self.REPORT_TIMEZONE).date().isoformat()
             is_holiday = local_date in price["holidayDates"]
@@ -1413,7 +1524,10 @@ class UsageReportService:
         for event in events:
             key = event[field]
             group = groups.setdefault(key, self._empty_group(key))
-            group["calls"] += 1
+            aggregate = bool(event.get("record_type"))
+            if aggregate:
+                group["aggregateRecords"] = group.get("aggregateRecords", 0) + 1
+            group["calls"] += int(not aggregate)
             group["failedCalls"] += int(event["status"] != "completed")
             group["unknownUsageCalls"] += int(not event["usage_known"])
             group["missingPriceCalls"] += int(event["price_status"] == "pending")
@@ -1423,14 +1537,15 @@ class UsageReportService:
             group["output"] += event["token_output"]
             group["totalTokens"] += event["total_tokens"]
             group["freeTokens"] += event.get("free_tokens", 0)
-            group["_latencies"].append(event["latency_ms"])
+            if event["latency_ms"] is not None:
+                group["_latencies"].append(event["latency_ms"])
             if event["ttft_ms"] is not None:
                 group["_ttfts"].append(event["ttft_ms"])
             if event["amount"] is None:
                 group["unpricedCalls"] += 1
                 group["unpricedTokens"] += event.get("billable_tokens", event["total_tokens"])
             else:
-                group["pricedCalls"] += 1
+                group["pricedCalls"] += int(not aggregate)
                 if event["price_status"] == "free":
                     group["freeCalls"] += 1
                 currency = event["amount_currency"]
@@ -1483,6 +1598,8 @@ class UsageReportService:
                 row.update({f: sum(r.get(f, 0) for r in attempts) for f in token_fields})
                 row["quota_free_tokens"] = sum(r.get("quota_free_tokens", 0) for r in attempts)
                 row["usage_known"] = all(r.get("usage_known", False) for r in attempts)
+                if event.get("measurement_source") == "livingmemory_journal":
+                    row["usage_known"] = row["usage_known"] and event["usage_known"]
                 row["unknown_requests"] = sum(not r.get("usage_known", False) for r in attempts)
                 row["attempts"] = len(attempts)
                 output.append(row)
@@ -1491,6 +1608,16 @@ class UsageReportService:
     def _configured_usage_models(self):
         """报表与计费窗口使用相同候选，避免向量等类型只能查询不能配置。"""
         return {p["model"] for p in self.available_models().get("models", [])}
+
+    def _models_by_period(self, events, field):
+        """完整实际模型汇总供堆叠图使用；不依赖限量/分页的调用明细。"""
+        periods = {}
+        for event in events:
+            if field == "hour" and event.get("record_type"):
+                continue
+            periods.setdefault(event[field], []).append(event)
+        return [{"key": key, "models": self._group(rows, "model")}
+                for key, rows in sorted(periods.items())]
 
     def report(self, query):
         range_name = str(query.get("range", "24h"))
@@ -1599,7 +1726,9 @@ class UsageReportService:
             )
             for currency, amount in sorted(known_amounts.items())
         }
-        latencies = [item["latency_ms"] for item in events]
+        aggregate_events = [item for item in events if item.get("record_type")]
+        call_events = [item for item in events if not item.get("record_type")]
+        latencies = [item["latency_ms"] for item in events if item["latency_ms"] is not None]
         ttfts = [item["ttft_ms"] for item in events if item["ttft_ms"] is not None]
         unpriced = [item for item in events if item["amount"] is None]
         free_events = [item for item in events if item["price_status"] == "free"]
@@ -1628,7 +1757,7 @@ class UsageReportService:
         )
         account_by_hour = {g["key"]: g for g in self._group(account_events, "hour")}
         usage_by_hour = {
-            item["key"]: item for item in self._group(events, "hour")
+            item["key"]: item for item in self._group(call_events, "hour")
         }
         if not balance_hours:
             # 余额采样覆盖不到（如昨日早于首个采样点）时，仍按事件给出小时分布，
@@ -1697,7 +1826,7 @@ class UsageReportService:
                 ),
                 "f",
             )
-        return {
+        payload = {
             "ok": True,
             "range": range_name,
             "from": cutoff,
@@ -1713,7 +1842,7 @@ class UsageReportService:
                     e["model"] == "automatic" and not e["request_details"] for e in events),
             },
             "summary": {
-                "calls": len(events),
+                "calls": len(call_events),
                 "failedCalls": sum(
                     item["status"] != "completed" for item in events
                 ),
@@ -1723,13 +1852,13 @@ class UsageReportService:
                 "totalTokens": total_tokens,
                 "knownAmounts": known_amounts,
                 "knownAmountCny": known_amounts.get("CNY", "0.000000"),
-                "pricedCalls": len(events) - len(unpriced),
+                "pricedCalls": sum(e["amount"] is not None for e in call_events),
                 "unpricedCalls": len(unpriced),
                 "missingPriceCalls": sum(item["price_status"] == "pending" for item in events),
                 "unpricedTokens": unpriced_tokens,
                 "freeCalls": len(free_events),
                 "freeTokens": free_tokens,
-                "billedCalls": len(events) - len(unpriced) - len(free_events),
+                "billedCalls": sum(e["amount"] is not None and e["price_status"] != "free" for e in call_events),
                 "billedTokens": total_tokens - free_tokens - unpriced_tokens,
                 "unknownUsageCalls": sum(not item["usage_known"] for item in events),
                 "unknownUsageRequests": sum(item["unknown_requests"] for item in events),
@@ -1751,6 +1880,8 @@ class UsageReportService:
             "byPlugin": self._group(events, "plugin_id"),
             "byModel": self._group(model_events, "model"),
             "byKind": self._group(events, "call_kind"),
+            "byDayModel": self._models_by_period(model_events, "day"),
+            "byHourModel": self._models_by_period(model_events, "hour"),
             "options": all_options,
             "pagination": {
                 "total": browsable_total,
@@ -1761,6 +1892,20 @@ class UsageReportService:
             },
             "details": events[offset : min(offset + limit, browsable_total)],
         }
+        if aggregate_events:
+            payload["summary"]["aggregateRecords"] = len(aggregate_events)
+            payload["reconciliation"] = {
+                "records": len(aggregate_events),
+                "totalTokens": sum(e["total_tokens"] for e in aggregate_events),
+                "amountCny": format(sum((Decimal(e["amount"]) for e in aggregate_events
+                                        if e["amount_currency"] == "CNY"), Decimal("0")), "f"),
+                "excludedFromHourly": True,
+                "note": "日总含网关汇总及官方差额补录；无逐笔时间的记录不计入小时图、调用次数和延迟。",
+            }
+        monitoring = self._usage_monitoring(now)
+        if monitoring is not None:
+            payload["usageMonitoring"] = monitoring
+        return payload
 
     def export_csv(self, query):
         query = dict(query)
@@ -1797,6 +1942,11 @@ class UsageReportService:
             "billable_tokens",
             "historical",
             "call_id",
+            "record_type",
+            "note",
+            "period_start",
+            "period_end",
+            "fixed_amount_cny",
         ]
         output = io.StringIO()
         output.write("\ufeff")
