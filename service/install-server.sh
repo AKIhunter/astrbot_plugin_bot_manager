@@ -51,7 +51,7 @@ for command in python3 systemctl ss; do
   fi
 done
 
-for file in server-panel.py server-agent.py server-monitor.py server-configure.py panel.html bot-manager.service; do
+for file in server-panel.py server-agent.py server-monitor.py server-embedding-usage.py server-configure.py panel.html bot-manager.service; do
   if [ ! -f "$SOURCE_DIR/$file" ]; then
     echo "Missing deployment file: $SOURCE_DIR/$file" >&2
     exit 1
@@ -152,6 +152,7 @@ install -d -m 0755 "$INSTALL_ROOT/releases" "$RELEASE_DIR"
 install -m 0755 "$SOURCE_DIR/server-panel.py" "$RELEASE_DIR/server-panel.py"
 install -m 0755 "$SOURCE_DIR/server-agent.py" "$RELEASE_DIR/server-agent.py"
 install -m 0644 "$SOURCE_DIR/server-monitor.py" "$RELEASE_DIR/server-monitor.py"
+install -m 0644 "$SOURCE_DIR/server-embedding-usage.py" "$RELEASE_DIR/server-embedding-usage.py"
 install -m 0755 "$SOURCE_DIR/server-configure.py" "$RELEASE_DIR/server-configure.py"
 install -m 0644 "$SOURCE_DIR/panel.html" "$RELEASE_DIR/panel.html"
 install -m 0644 "$SOURCE_DIR/bot-manager.service" "$RELEASE_DIR/bot-manager.service"
@@ -165,6 +166,7 @@ python3 -m py_compile \
   "$RELEASE_DIR/server-panel.py" \
   "$RELEASE_DIR/server-agent.py" \
   "$RELEASE_DIR/server-monitor.py" \
+  "$RELEASE_DIR/server-embedding-usage.py" \
   "$RELEASE_DIR/server-configure.py" \
   "$RELEASE_DIR/$TELEMETRY_PLUGIN/"*.py
 (
@@ -173,6 +175,7 @@ python3 -m py_compile \
     server-panel.py \
     server-agent.py \
     server-monitor.py \
+    server-embedding-usage.py \
     server-configure.py \
     panel.html \
     bot-manager.service \
