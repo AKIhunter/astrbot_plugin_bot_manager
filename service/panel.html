@@ -745,6 +745,25 @@
       margin-bottom: 10px;
     }
     .price-entry-header strong { font-size: 12px; }
+    .price-entry > summary {
+      cursor: pointer;
+      padding: 4px 0;
+      font-size: 12px;
+    }
+    .price-entry > summary small {
+      display: block;
+      margin: 5px 0 0 16px;
+      color: var(--muted);
+      line-height: 1.6;
+      overflow-wrap: anywhere;
+    }
+    .price-entry > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    .price-entry[open] > summary { margin-bottom: 14px; }
+    .price-entry > summary strong { overflow-wrap: anywhere; }
+    .price-entry .price-entry-header { justify-content: flex-end; }
+    .price-entry > summary .expand-hint { color: var(--muted); margin-left: 10px; }
+    .price-entry[open] > summary .expand-hint { display: none; }
+    #pricing-dialog .form-section-heading > .button { flex-shrink: 0; white-space: nowrap; }
 
     .tool-frame {
       min-height: 360px;
@@ -968,6 +987,8 @@
       .field.full { grid-column: auto; }
       .dialog-header, .dialog-footer { padding-inline: 14px; }
       .dialog-body { padding-inline: 14px; }
+      #pricing-dialog .dialog-footer { flex-direction: column; align-items: stretch; gap: 8px; }
+      #pricing-dialog .dialog-footer .form-message { margin: 0; }
       .usage-toolbar { align-items: stretch; }
       .filter-field { min-width: calc(50% - 5px); flex: 1; }
       .usage-toolbar > .button { flex: 1; }
@@ -1421,10 +1442,12 @@
         <div class="dialog-body">
           <section class="form-section">
             <div class="form-section-heading">
-              <div><h3>当前模型价格</h3><p>普通输入、缓存输入和输出分别计价；历史版本收起，留空表示该项待配置。</p></div>
+              <div><h3>当前模型价格</h3><p>点击模型展开配置。支持已配置的各类模型，也可手动输入模型名；留空表示该项单价待配置。向量模型通常只计输入 Token，按供应商规则填写。</p></div>
               <button type="button" class="button" id="add-price-entry">添加价格</button>
             </div>
             <div id="price-entry-list"></div>
+            <datalist id="pricing-model-options"></datalist>
+            <datalist id="pricing-provider-options"></datalist>
             <details id="price-history"><summary>历史价格（仅查看，用于旧记录核算）</summary><div id="price-history-list"></div></details>
           </section>
           <section class="form-section">
@@ -2763,30 +2786,62 @@
         return local.toISOString().slice(0, 16);
       }
 
-      function pricingModelOptions(value) {
-        // 当前已配置模型始终可查看；新增候选只来自 automatic 的正常连接。
+      function renderPricingModelOptions() {
+        // 统一候选覆盖各类 Provider，输入框保留自定义模型能力。
         const values = new Set([
-          value, ...(state.usagePricing?.prices || [])
-            .filter(p => p.providerId !== "multi_api_router" && p.model !== "automatic").map(p => p.model),
+          ...(state.usagePricing?.prices || []).map(p => p.model),
+          ...(state.usagePricing?.freeQuotas || []).map(p => p.model),
+          ...(state.usage?.options?.models || []).filter(model => model !== "automatic"),
           ...(state.usageModels?.models || []).map(p => p.model)
         ].filter(Boolean));
-        return '<option value="">请选择模型</option>' + Array.from(values).map(model =>
-          `<option value="${escapeHtml(model)}" ${model === value ? "selected" : ""}>${escapeHtml(model)}</option>`
+        $("#pricing-model-options").innerHTML = Array.from(values).sort().map(model =>
+          `<option value="${escapeHtml(model)}" label="${escapeHtml(pricingModelKind(model))}"></option>`
         ).join("");
+        const providers = new Set((state.usageModels?.models || []).map(p => p.providerId).filter(Boolean));
+        $("#pricing-provider-options").innerHTML = Array.from(providers).map(provider =>
+          `<option value="${escapeHtml(provider)}"></option>`).join("");
+      }
+
+      function pricingModelKind(model) {
+        if (model === "automatic") return "路由总入口（按实际模型核算）";
+        const labels = {embedding: "向量", rerank: "重排", tts: "语音合成", stt: "语音识别", llm: "对话 / 多模态"};
+        const kinds = new Set((state.usageModels?.models || []).filter(p => p.model === model)
+          .map(p => labels[p.kind || "llm"] || "其他模型"));
+        return Array.from(kinds).join("、") || "自定义模型";
+      }
+
+      function fillPricingProvider(model, input) {
+        const ids = new Set((state.usageModels?.models || []).filter(p => p.model === model)
+          .map(p => p.providerId).filter(Boolean));
+        // 多连接同名模型不猜 Provider；用户可手动选填，价格留空则匹配同名模型。
+        input.value = ids.size === 1 ? Array.from(ids)[0] : "";
+      }
+
+      let pricingFieldId = 0;
+      function labelPricingFields(wrapper) {
+        $$(".field > label", wrapper).forEach(label => {
+          const control = label.nextElementSibling;
+          if (control?.matches("input, select")) {
+            control.id = `pricing-field-${++pricingFieldId}`;
+            label.htmlFor = control.id;
+          }
+        });
       }
 
       function priceEntry(item = {}) {
-        const wrapper = document.createElement("div");
+        const wrapper = document.createElement("details");
         wrapper.className = "price-entry";
         wrapper.dataset.priceId = item.id || "";
+        wrapper.open = !item.id;
+        const initialModel = item.model || $("#usage-model").value || "";
         const quota = (state.usage?.freeQuotas || []).find(q =>
           q.model === item.model && (!item.providerId || q.providerId === item.providerId));
         const freeNote = quota?.remainingTokens > 0
           ? `额度内免费 ¥0 · 估算剩余 ${formatInteger(quota.remainingTokens)} Token`
           : "";
         wrapper.innerHTML = `
+          <summary><strong>${escapeHtml(initialModel || "新价格版本")}</strong><span class="expand-hint">点击配置</span><small class="price-summary"></small></summary>
           <div class="price-entry-header">
-            <div><strong>${escapeHtml(item.model || "新价格版本")}</strong>${freeNote ? `<br><small>${escapeHtml(freeNote)}</small>` : ""}</div>
             <button type="button" class="danger-link remove-price-entry">删除</button>
           </div>
           <div class="form-grid">
@@ -2805,11 +2860,11 @@
             </div>
             <div class="field">
               <label>模型</label>
-              <select data-price-field="model" required>${pricingModelOptions(item.model || $("#usage-model").value || "")}</select>
+              <input data-price-field="model" list="pricing-model-options" required maxlength="160" value="${escapeHtml(initialModel)}" placeholder="选择或输入模型名，如 text-embedding-v4">
             </div>
             <div class="field">
               <label>Provider ID（可选）</label>
-              <input data-price-field="providerId" maxlength="160" value="${escapeHtml(item.providerId || "")}" placeholder="留空则匹配同名模型">
+              <input data-price-field="providerId" list="pricing-provider-options" maxlength="160" value="${escapeHtml(item.providerId || "")}" placeholder="留空则匹配同名模型">
             </div>
             <div class="field full">
               <label>生效时间</label>
@@ -2850,30 +2905,46 @@
           // 峰谷价也是人民币，不再自动切成 USD。
           $("[data-price-field=currency]", wrapper).value = "CNY";
         };
-        $("[data-price-field=model]", wrapper).addEventListener("input", event => {
-          $("strong", wrapper).textContent = event.target.value.trim() || "新价格版本";
-          const candidate = (state.usageModels?.models || []).find(p => p.model === event.target.value);
-          if (candidate) $("[data-price-field=providerId]", wrapper).value = candidate.providerId;
+        const updateSummary = () => {
+          const model = $("[data-price-field=model]", wrapper).value.trim();
+          const provider = $("[data-price-field=providerId]", wrapper).value.trim();
+          $("summary strong", wrapper).textContent = model || "新价格版本";
+          const scheduled = $("[data-price-field=pricingMode]", wrapper).value === "deepseek_peak";
+          const fields = scheduled
+            ? ["inputOtherOffPeakPerMillion", "inputCachedOffPeakPerMillion", "outputOffPeakPerMillion"]
+            : ["inputOtherCnyPerMillion", "inputCachedCnyPerMillion", "outputCnyPerMillion"];
+          const rates = fields.map(field => $(`[data-price-field=${field}]`, wrapper).value.trim() || "待配置");
+          $(".price-summary", wrapper).textContent = `${pricingModelKind(model)} · ${provider || "同名模型"} · ${scheduled ? "标准 / 优惠时段；优惠价 " : ""}输入 / 缓存 / 输出：${rates.join(" / ")} 元 / 百万 Token${freeNote ? " · " + freeNote : ""}`;
+        };
+        $("[data-price-field=model]", wrapper).addEventListener("change", event => {
+          fillPricingProvider(event.target.value.trim(), $("[data-price-field=providerId]", wrapper));
+          updateSummary();
         });
+        wrapper.addEventListener("input", updateSummary);
+        wrapper.addEventListener("change", updateSummary);
         $("[data-price-field=pricingMode]", wrapper).addEventListener("change", updateMode);
         updateMode();
+        updateSummary();
+        labelPricingFields(wrapper);
         return wrapper;
       }
 
       function freeQuotaEntry(item = {}) {
-        const wrapper = document.createElement("div");
+        const wrapper = document.createElement("details");
         wrapper.className = "free-quota-entry price-entry";
         wrapper.dataset.quotaId = item.id || "";
+        wrapper.open = !item.id;
         const stateQuota = (state.usage?.freeQuotas || []).find(q =>
           q.model === item.model && q.providerId === item.providerId);
         const statusText = stateQuota
           ? `已采集 ${formatInteger(stateQuota.observedTokens)} Token，估算剩余 ${formatInteger(stateQuota.remainingTokens)} Token${stateQuota.unknownUsageCalls ? "；有用量未知调用，需对账回填" : ""}`
           : "保存后按完整调用历史核算剩余额度。";
         wrapper.innerHTML = `
-          <div class="price-entry-header"><strong>免费额度</strong><button type="button" class="danger-link remove-free-quota">删除额度</button></div>
+          <summary><strong>${escapeHtml(item.model || "新免费额度")}</strong><span class="expand-hint">点击配置</span><small class="quota-summary"></small></summary>
+          <div class="price-entry-header"><button type="button" class="danger-link remove-free-quota">删除额度</button></div>
           <div class="form-grid">
-            <div class="field"><label>模型</label><select data-quota-field="model" required>${pricingModelOptions(item.model || "")}</select></div>
-            <div class="field"><label>Provider ID</label><input data-quota-field="providerId" required value="${escapeHtml(item.providerId || "")}"></div>
+            <div class="field"><label>模型</label><input data-quota-field="model" list="pricing-model-options" required maxlength="160" value="${escapeHtml(item.model || "")}" placeholder="选择或输入模型名"></div>
+            <div class="field"><label>Provider ID</label><input data-quota-field="providerId" list="pricing-provider-options" required maxlength="160" value="${escapeHtml(item.providerId || "")}"></div>
             <div class="field"><label>总免费 Token（0 = 不启用）</label><input data-quota-field="totalTokens" type="number" min="0" max="9999999999999" step="1" required value="${escapeHtml(String(item.totalTokens ?? 1000000))}"></div>
             <div class="field"><label>起点前 / 外部已用 Token</label><input data-quota-field="usedTokensBefore" type="number" min="0" max="9999999999999" step="1" required value="${escapeHtml(String(item.usedTokensBefore ?? 0))}"></div>
             <div class="field"><label>累计起点</label><input data-quota-field="startsAt" type="datetime-local" required value="${escapeHtml(toLocalDateTimeInput(item.startsAt))}"></div>
@@ -2882,15 +2953,24 @@
             <div class="field full"><small>额度内费用为 ¥0；超额按所配置单价估算。未配置超额单价时显示待确认，跨额度请求按 Token 占比分摊。</small></div>
             <div class="field full"><small>${escapeHtml(statusText)}</small></div>
           </div>`;
+        const updateSummary = () => {
+          const model = $("[data-quota-field=model]", wrapper).value.trim();
+          $("summary strong", wrapper).textContent = model || "新免费额度";
+          $(".quota-summary", wrapper).textContent = `${pricingModelKind(model)} · 总额度 ${formatInteger($("[data-quota-field=totalTokens]", wrapper).value)} Token · ${stateQuota ? statusText : "保存后核算剩余额度"}`;
+        };
         $("[data-quota-field=model]", wrapper).addEventListener("change", event => {
-          const candidate = (state.usageModels?.models || []).find(p => p.model === event.target.value);
-          if (candidate) $("[data-quota-field=providerId]", wrapper).value = candidate.providerId;
+          fillPricingProvider(event.target.value.trim(), $("[data-quota-field=providerId]", wrapper));
+          updateSummary();
         });
+        wrapper.addEventListener("input", updateSummary);
+        updateSummary();
+        labelPricingFields(wrapper);
         return wrapper;
       }
 
       function renderPricing(config) {
         state.usagePricing = config;
+        renderPricingModelOptions();
         const list = $("#price-entry-list");
         list.replaceChildren(...(config.prices || []).map(priceEntry));
         if (!list.children.length) list.appendChild(priceEntry());
@@ -2907,14 +2987,14 @@
       async function openPricing() {
         const dialog = $("#pricing-dialog");
         $("#pricing-message").textContent = "正在读取配置…";
+        $("#pricing-message").className = "form-message";
         dialog.showModal();
         try {
           const config = await getJson("/api/usage-pricing");
           state.usageModels = await getJson("/api/usage-models");
           renderPricing(config);
-          $("#pricing-message").textContent = state.usageModels.ok
-            ? `automatic 有 ${state.usageModels.models.length} 个正常连接。额度内免费；未配置超额单价的费用待确认。`
-            : state.usageModels.error;
+          const models = state.usageModels;
+          $("#pricing-message").textContent = `已配置 ${models.configuredModelCount || 0} 个连接；automatic 有 ${models.routerModelCount ?? models.models.length} 个正常连接。此处登记按 Token 计费的单价 / 额度。${models.ok ? "" : " " + models.error}`;
         } catch (error) {
           $("#pricing-message").className = "form-message error";
           $("#pricing-message").textContent = `读取失败：${error.message}`;
@@ -3185,6 +3265,11 @@
         $("#close-pricing").addEventListener("click", () => $("#pricing-dialog").close());
         $("#cancel-pricing").addEventListener("click", () => $("#pricing-dialog").close());
         $("#pricing-form").addEventListener("submit", savePricing);
+        // 折叠项内的必填错误先展开，让浏览器能定位并聚焦字段。
+        $("#pricing-form").addEventListener("invalid", event => {
+          const entry = event.target.closest("details.price-entry");
+          if (entry) entry.open = true;
+        }, true);
         $("#add-free-quota").addEventListener("click", () => {
           if ($$(".free-quota-entry").length < 100) $("#free-quota-list").appendChild(freeQuotaEntry());
         });
