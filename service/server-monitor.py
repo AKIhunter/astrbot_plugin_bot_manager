@@ -477,13 +477,55 @@ class UsageReportService:
         self._model_cache_at = 0
         self._model_lock = threading.Lock()
 
+    @staticmethod
+    def _provider_usage_models(config):
+        """只返回模型与类型，不向页面传递 API Key 等连接配置。"""
+        if not isinstance(config, dict):
+            return []
+        sources = {p.get("id"): p for p in (config.get("provider_sources") or [])
+                   if isinstance(p, dict)}
+        models = []
+        for provider in config.get("provider") or []:
+            if not isinstance(provider, dict) or provider.get("enable", True) is False:
+                continue
+            source = sources.get(provider.get("provider_source_id"), {})
+            provider_type = str(provider.get("type") or source.get("type") or "").lower()
+            model = next((provider.get(key) for key in (
+                "embedding_model", "rerank_model", "reranking_model", "model",
+                "tts_model", "stt_model",
+            ) if provider.get(key)), None)
+            if not isinstance(model, str) or not model.strip() or model == "automatic":
+                continue
+            if provider.get("embedding_model") or "embedding" in provider_type:
+                kind = "embedding"
+            elif provider.get("rerank_model") or provider.get("reranking_model") or "rerank" in provider_type:
+                kind = "rerank"
+            elif "tts" in provider_type or "text_to_speech" in provider_type:
+                kind = "tts"
+            elif "stt" in provider_type or "speech_to_text" in provider_type:
+                kind = "stt"
+            else:
+                kind = "llm"
+            models.append({
+                "model": model.strip(), "providerId": str(provider.get("id") or ""),
+                "name": model.strip(), "kind": kind, "source": "configured",
+            })
+        return models
+
     def available_models(self):
-        """读取 automatic 的实时健康列表，不用调用记录推断连接正常。"""
+        """直连及各类 Provider 加上 automatic 健康模型；配置存在不代表连通已验证。"""
         with self._model_lock:
             if self._model_cache and time.monotonic() - self._model_cache_at < 10:
                 return self._model_cache
+            config = {}
             try:
                 config = json.loads(self.astrbot_config.read_text(encoding="utf-8-sig"))
+                if not isinstance(config, dict):
+                    config = {}
+            except (OSError, ValueError, TypeError):
+                pass
+            configured = self._provider_usage_models(config)
+            try:
                 dashboard = config["dashboard"]
                 encode = lambda value: base64.urlsafe_b64encode(value).rstrip(b"=")
                 header = encode(b'{"alg":"HS256","typ":"JWT"}')
@@ -522,6 +564,7 @@ class UsageReportService:
                             "host": item.get("host") or "",
                             "slot": item.get("slot"),
                             "checkedAt": health.get("checked_at"),
+                            "kind": "llm", "source": "router",
                         })
                 result = {
                     "ok": True, "group": "automatic", "models": models,
@@ -531,6 +574,15 @@ class UsageReportService:
                 # 读取失败时不沿用旧的正常列表，以免异常模型继续进入选择框。
                 result = {"ok": False, "group": "automatic", "models": [],
                           "error": "无法读取路由健康状态，请检查 AstrBot 与路由插件。"}
+            # 路由不可用时，仍可登记已配置的向量、语音等模型单价和额度。
+            result["routerModelCount"] = len(result["models"])
+            result["configuredModelCount"] = len(configured)
+            seen = {(p["providerId"], p["model"]) for p in result["models"]}
+            for item in configured:
+                key = (item["providerId"], item["model"])
+                if key not in seen:
+                    result["models"].append(item)
+                    seen.add(key)
             self._model_cache = result
             self._model_cache_at = time.monotonic()
             return result
@@ -1437,22 +1489,8 @@ class UsageReportService:
         return output
 
     def _configured_usage_models(self):
-        """报表可选已启用的直连/向量模型；automatic 使用已核验的健康列表。"""
-        models = {p["model"] for p in self.available_models().get("models", [])}
-        try:
-            config = json.loads(self.astrbot_config.read_text(encoding="utf-8-sig"))
-            for provider in config.get("provider", []):
-                if provider.get("enable", True) is False:
-                    continue
-                model = provider.get("embedding_model") or provider.get("model")
-                if model and model != "automatic" and (
-                    provider.get("embedding_model") or provider.get("type") is None
-                    or provider.get("type") == "openai"
-                ):
-                    models.add(str(model))
-        except (OSError, ValueError, TypeError):
-            pass
-        return models
+        """报表与计费窗口使用相同候选，避免向量等类型只能查询不能配置。"""
+        return {p["model"] for p in self.available_models().get("models", [])}
 
     def report(self, query):
         range_name = str(query.get("range", "24h"))
