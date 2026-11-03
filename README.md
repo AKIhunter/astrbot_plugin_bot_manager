@@ -155,8 +155,8 @@ sudo python3 /opt/bot-manager/current/server-configure.py < /root/bot-manager-ba
 
 ## 指令
 
-全部管理入口仅限 AstrBot 管理员；默认前缀 `/`，入口可用
-`/botmanager`、`/bm`、`/bot管理`。
+全部管理入口仅限 AstrBot 管理员；默认前缀 `/`，统一使用 `/bm`。
+帮助按状态与余额、用量统计、指令查询分组；命令与说明分行，各项以空行隔开。
 
 | 指令 | 功能 |
 | --- | --- |
@@ -169,7 +169,8 @@ sudo python3 /opt/bot-manager/current/server-configure.py < /root/bot-manager-ba
 | `/bm 详情 <完整指令名> [页码]` | 完整原生命令说明、全部别名 |
 
 时间支持 `今天`、`昨天`、`7天`、`30天`、`全部`，按北京时间。
-兼容 `/账户余额`、`/余额`、`/钱包` 和管理员 LLM 工具 `get_wallet_balance`。
+旧 `/botmanager`、`/bot管理`、`/账户余额`、`/余额`、`/钱包` 入口已移除，
+查询余额请使用 `/bm 余额`。管理员 LLM 工具 `get_wallet_balance` 保留。
 停用插件只显示帮助，查询不会启用或执行它们。
 
 ## 代码逻辑
