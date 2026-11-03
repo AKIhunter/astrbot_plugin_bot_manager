@@ -398,7 +398,7 @@ class UsageTelemetryPlugin(Star):
             logger.warning("Bot Manager: 指令目录刷新失败 (%s)", type(exc).__name__)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("botmanager", alias={"bm", "bot管理"})
+    @filter.command("bm")
     async def manager_command(self, event: AstrMessageEvent, arguments: GreedyStr):
         """统一管理入口：帮助、状态、余额、用量、搜索、指令、详情。"""
         if not event.is_admin():
@@ -1249,12 +1249,6 @@ class UsageTelemetryPlugin(Star):
         except Exception as exc:
             logger.warning("Unable to query DeepSeek balance: %s", exc)
             return f"暂时无法获取 DeepSeek 当前余额：{str(exc)[:160]}"
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("账户余额", alias={"余额", "钱包"})
-    async def balance_command(self, event: AstrMessageEvent):
-        """查询 DeepSeek 当前账户余额。"""
-        yield event.plain_result(await self._balance_text())
 
     @filter.llm_tool(name="get_wallet_balance")
     async def get_wallet_balance(
