@@ -36,7 +36,7 @@ TELEMETRY_TARGET="$ASTRBOT_PLUGIN_ROOT/$TELEMETRY_PLUGIN"
 TELEMETRY_BACKUP_ROOT="/var/lib/astrbot/data/plugin-backups"
 LEGACY_SEARCH_TARGET="$ASTRBOT_PLUGIN_ROOT/astrbot_plugin_search_meter"
 # 公共发行版通过此模块读取 AstrBot 数据目录，部署时必须一起复制。
-PLUGIN_FILES="main.py metadata.yaml search_meter.py command_query.py usage_query.py runtime_paths.py"
+PLUGIN_FILES="main.py metadata.yaml search_meter.py command_query.py usage_query.py runtime_paths.py assets/help.png"
 USAGE_DB="/var/lib/astrbot/data/plugin_usage.db"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -156,7 +156,7 @@ install -m 0644 "$SOURCE_DIR/server-embedding-usage.py" "$RELEASE_DIR/server-emb
 install -m 0755 "$SOURCE_DIR/server-configure.py" "$RELEASE_DIR/server-configure.py"
 install -m 0644 "$SOURCE_DIR/panel.html" "$RELEASE_DIR/panel.html"
 install -m 0644 "$SOURCE_DIR/bot-manager.service" "$RELEASE_DIR/bot-manager.service"
-install -d -m 0755 "$RELEASE_DIR/$TELEMETRY_PLUGIN"
+install -d -m 0755 "$RELEASE_DIR/$TELEMETRY_PLUGIN" "$RELEASE_DIR/$TELEMETRY_PLUGIN/assets"
 for file in $PLUGIN_FILES; do
   install -m 0644 "$TELEMETRY_SOURCE/$file" "$RELEASE_DIR/$TELEMETRY_PLUGIN/$file"
 done
@@ -181,6 +181,7 @@ python3 -m py_compile \
     bot-manager.service \
     "$TELEMETRY_PLUGIN/"*.py \
     "$TELEMETRY_PLUGIN/metadata.yaml" \
+    "$TELEMETRY_PLUGIN/assets/help.png" \
     > SHA256SUMS
 )
 systemctl daemon-reload
@@ -274,7 +275,7 @@ if [ "$telemetry_changed" -eq 1 ]; then
   search_backup="$TELEMETRY_BACKUP_ROOT/astrbot_plugin_search_meter-${RELEASE_ID}"
   install -d -o astrbot -g astrbot -m 0755 "$ASTRBOT_PLUGIN_ROOT" "$TELEMETRY_BACKUP_ROOT"
   rm -rf "$telemetry_stage"
-  install -d -o astrbot -g astrbot -m 0755 "$telemetry_stage"
+  install -d -o astrbot -g astrbot -m 0755 "$telemetry_stage" "$telemetry_stage/assets"
   for file in $PLUGIN_FILES; do
     install -o astrbot -g astrbot -m 0644 "$RELEASE_DIR/$TELEMETRY_PLUGIN/$file" "$telemetry_stage/$file"
   done

@@ -413,6 +413,11 @@ class UsageTelemetryPlugin(Star):
         action = parts.pop(0).casefold() if parts else "帮助"
         try:
             if action in ("帮助", "help", "?"):
+                # 帮助图随插件打包，不依赖运行环境的字体或图片渲染服务。
+                help_image = Path(__file__).parent / "assets" / "help.png"
+                if help_image.is_file():
+                    yield event.image_result(str(help_image))
+                    return
                 text = HELP
             elif action in ("余额", "钱包", "账户余额", "balance"):
                 text = await self._balance_text()
