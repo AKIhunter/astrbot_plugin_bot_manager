@@ -228,8 +228,15 @@ class Handler(BaseHTTPRequestHandler):
             elif request.path == "/api/status":
                 self.send_json(200, run_agent("status"))
             elif request.path == "/api/metrics":
-                range_name = parse_qs(request.query).get("range", ["24h"])[0]
-                self.send_json(200, self.server.metrics.query(range_name))
+                query = parse_qs(request.query)
+                range_name = query.get("range", ["24h"])[0]
+                app_id = query.get("app", ["server"])[0]
+                try:
+                    payload = self.server.metrics.query(range_name, app_id)
+                except ValueError:
+                    self.send_json(400, {"ok": False, "error": "Unknown metrics range or application."})
+                    return
+                self.send_json(200, payload)
             elif request.path == "/api/balances":
                 force = parse_qs(request.query).get("refresh", ["0"])[0] == "1"
                 self.send_json(200, self.server.balances.get(force=force))
@@ -461,7 +468,8 @@ def main():
         metrics_db=args.metrics_db,
     )
     # 趋势图沿用 60 秒采样；用进程内探针，不再每次跑一遍 docker 状态采集
-    server.probe = MONITOR.SystemProbe()
+    server.probe = MONITOR.SystemProbe(
+        known_applications=server.metrics.query("1h")["applications"])
     server.sampler = MONITOR.ResourceSampler(
         server.metrics,
         server.probe.collect,
