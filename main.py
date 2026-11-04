@@ -366,6 +366,9 @@ class UsageTelemetryPlugin(Star):
                 for name, original in originals.items():
                     setattr(provider, name, original)
                 delattr(provider, "_bot_manager_embedding_owner")
+                for name in ("_bot_manager_embedding_context", "_bot_manager_meter_embedding"):
+                    if hasattr(provider, name):
+                        delattr(provider, name)
         for resource, descriptor in getattr(self, "_sync_clients", {}).values():
             if getattr(resource, "_bot_manager_embedding_owner", None) is self:
                 resource.call = descriptor
@@ -395,7 +398,7 @@ class UsageTelemetryPlugin(Star):
             logger.warning("Bot Manager: 指令目录刷新失败 (%s)", type(exc).__name__)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("botmanager", alias={"bm", "bot管理"})
+    @filter.command("bm")
     async def manager_command(self, event: AstrMessageEvent, arguments: GreedyStr):
         """统一管理入口：帮助、状态、余额、用量、搜索、指令、详情。"""
         if not event.is_admin():
@@ -410,6 +413,11 @@ class UsageTelemetryPlugin(Star):
         action = parts.pop(0).casefold() if parts else "帮助"
         try:
             if action in ("帮助", "help", "?"):
+                # 帮助图随插件打包，不依赖运行环境的字体或图片渲染服务。
+                help_image = Path(__file__).parent / "assets" / "help.png"
+                if help_image.is_file():
+                    yield event.image_result(str(help_image))
+                    return
                 text = HELP
             elif action in ("余额", "钱包", "账户余额", "balance"):
                 text = await self._balance_text()
@@ -699,12 +707,42 @@ class UsageTelemetryPlugin(Star):
                 return embedding_wrapper
             setattr(provider, name, wrap(original))
         provider._bot_manager_embedding_owner = self
+        self._install_embedding_hooks(provider)
         self._embedding_providers[id(provider)] = (provider, originals)
         # DashScope 在工作线程返回 usage 后，官方适配器只返回向量；在丢弃前读取。
         if (getattr(provider, "provider_config", {}) or {}).get("type") == "dashscope_embedding":
             from dashscope import MultiModalEmbedding, TextEmbedding
             for resource in (TextEmbedding, MultiModalEmbedding):
                 self._wrap_sync_embedding_client(resource)
+
+    def _install_embedding_hooks(self, provider):
+        def context():
+            state = CALL_CONTEXT.get()
+            if not self._same_call(state, provider):
+                return None
+            # 后台批次继承此标识，SDK 层不再另记一笔相同消费。
+            state["_embedding_journal"] = True
+            return {key: state[key] for key in
+                    ("call_id", "plugin_id", "route", "source", "provider_id", "model")}
+
+        async def meter(operation):
+            if self._same_call(CALL_CONTEXT.get(), provider):
+                return await operation()
+            state = self._new_call(provider, {}, "embedding")
+            token = CALL_CONTEXT.set(state)
+            try:
+                await self._persist_call(state)
+                result = await operation()
+                await self._finish_call(state, response=result)
+                return result
+            except BaseException as exc:
+                await self._finish_call(state, error=exc)
+                raise
+            finally:
+                CALL_CONTEXT.reset(token)
+
+        provider._bot_manager_embedding_context = context
+        provider._bot_manager_meter_embedding = meter
 
     def _new_request(self, state, model, provider_id):
         request = {
@@ -961,6 +999,8 @@ class UsageTelemetryPlugin(Star):
         @functools.wraps(original)
         async def create_wrapper(*args, **kwargs):
             state = CALL_CONTEXT.get()
+            if kind == "embedding" and state and state.get("_embedding_journal"):
+                return await original(*args, **kwargs)
             standalone = not (
                 state is not None and state.get("_owner") is self
                 and state.get("_active")
@@ -1214,12 +1254,6 @@ class UsageTelemetryPlugin(Star):
         except Exception as exc:
             logger.warning("Unable to query DeepSeek balance: %s", exc)
             return f"暂时无法获取 DeepSeek 当前余额：{str(exc)[:160]}"
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("账户余额", alias={"余额", "钱包"})
-    async def balance_command(self, event: AstrMessageEvent):
-        """查询 DeepSeek 当前账户余额。"""
-        yield event.plain_result(await self._balance_text())
 
     @filter.llm_tool(name="get_wallet_balance")
     async def get_wallet_balance(

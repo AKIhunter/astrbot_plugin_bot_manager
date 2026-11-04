@@ -1,7 +1,7 @@
 name: astrbot_plugin_usage_telemetry
 display_name: Bot Manager 集成管理
 short_desc: 模型与搜索计量、余额提醒和完整指令查询
-desc: 统一采集模型与向量 Token、DeepSeek 搜索及抓取次数，保留余额与充值提醒，并提供 /botmanager 管理和服务器指令查询。内部标识保持兼容。
+desc: 统一采集模型与向量 Token、DeepSeek 搜索及抓取次数，保留余额与充值提醒，并提供 /bm 管理和服务器指令查询。内部标识保持兼容。
 version: 2.0.0
 author: Bot Manager
 repo: https://github.com/AKIhunter/astrbot_plugin_bot_manager
@@ -11,9 +11,18 @@ tags:
   - token
   - cost
 help: |
-  /botmanager 或 /bm：查看全部管理指令（仅管理员）
-  /bm 状态；/bm 余额；/bm 用量 [今天|昨天|7天|30天|全部]
-  /bm 搜索 [今天|昨天|7天|30天|全部]
+  Bot Manager · 指令帮助（仅管理员）
+  /bm 或 /bm 帮助：查看指令表格图片
+
+  【状态与余额】
+  /bm 状态：查看采集和提醒状态
+  /bm 余额：查询 DeepSeek 实时余额
+
+  【用量统计】
+  /bm 用量 [时间]：调用、Token 和插件排行
+  /bm 搜索 [时间]：搜索、抓取次数及费用
+  时间：今天、昨天、7天、30天、全部
+
+  【指令查询】
   /bm 指令 [关键词或插件名] [页码]
   /bm 详情 <完整指令名> [页码]
-  /账户余额、/余额、/钱包 保持兼容。
