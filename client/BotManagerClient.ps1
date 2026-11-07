@@ -30,7 +30,17 @@ $Script:SettingsPath = Join-Path $Script:AppDir 'settings.json'
 $Script:PidPath      = Join-Path $Script:AppDir 'tunnel.pid'
 $Script:LogPath      = Join-Path $Script:AppDir 'ssh.log'
 $Script:PanelPort    = 17321
-$Script:TunnelPid    = 0
+# 面板里「新窗口打开」三个入口用的端口，与 /api/config 的默认值保持一致；
+# 这些链接是在本机浏览器里打开的，所以必须由隧道映射到本机同名端口。
+$Script:ServiceForwards = @(
+    @{ Port = 6185; Label = 'AstrBot' },
+    @{ Port = 5099; Label = 'SnowLuma' },
+    @{ Port = 6081; Label = 'noVNC' }
+)
+$Script:ClientVersion = '2.2.3'
+$Script:ForwardNotes  = @()
+$Script:TunnelOwned   = $false
+$Script:TunnelPid     = 0
 $Script:SessionKey   = ''
 $Script:Form         = $null
 $Script:LogBox       = $null
@@ -64,7 +74,7 @@ trap {
     exit 1
 }
 
-Write-ClientLog ('启动：SelfTest={0} Diagnose={1} DumpLayout={2}' -f $SelfTest, $Diagnose, [string]$DumpLayout)
+Write-ClientLog ('启动 v{0}：SelfTest={1} Diagnose={2} DumpLayout={3}' -f $Script:ClientVersion, $SelfTest, $Diagnose, [string]$DumpLayout)
 
 function Initialize-AppDir {
     if (-not (Test-Path -LiteralPath $Script:AppDir)) {
@@ -289,14 +299,34 @@ function Test-RemoteConnection($Settings) {
     return @{ Ok = $false; Message = $hint }
 }
 
+function Get-PortOwner([int]$Port) {
+    try {
+        $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop |
+            Select-Object -First 1
+        $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+        return @{ Pid = [int]$conn.OwningProcess; Name = [string]$proc.ProcessName }
+    } catch {
+        return $null
+    }
+}
+
 function Start-Tunnel($Settings, [string]$IdentityPath) {
     Initialize-AppDir
     $target = '{0}@{1}' -f $Settings.ServerUser, $Settings.ServerHost
-    $forward = '127.0.0.1:{0}:127.0.0.1:{1}' -f $Settings.LocalPort, $Script:PanelPort
     $arguments = @(Get-SshArgs $Settings $IdentityPath)
+    $arguments += @('-N', '-L', ('127.0.0.1:{0}:127.0.0.1:{1}' -f $Settings.LocalPort, $Script:PanelPort))
+    $Script:ForwardNotes = @()
+    foreach ($item in $Script:ServiceForwards) {
+        if ($item.Port -eq $Settings.LocalPort) { continue }
+        $owner = Get-PortOwner $item.Port
+        if ($owner) {
+            # 本机这个端口被别的程序占了：跳过它，别把整条隧道拖垮
+            $Script:ForwardNotes += ('{0}（{1}）本机端口被 {2}(PID {3}) 占用，已跳过' -f $item.Label, $item.Port, $owner.Name, $owner.Pid)
+            continue
+        }
+        $arguments += @('-L', ('127.0.0.1:{0}:127.0.0.1:{0}' -f $item.Port))
+    }
     $arguments += @(
-        '-N',
-        '-L', $forward,
         '-o', 'ExitOnForwardFailure=yes',
         '-o', 'ServerAliveInterval=30',
         '-o', 'ServerAliveCountMax=3',
@@ -574,47 +604,69 @@ if ($SelfTest) {
 }
 
 # 诊断：读现有配置，跑一次「测试连接 + 建隧道 + 探面板」，不进界面
+function Write-Diag($Message) {
+    # 诊断模式既打印到控制台，也落进 client.log，避免管道编码把中文弄乱
+    Write-Host $Message
+    Write-ClientLog ([string]$Message)
+}
+
 function Invoke-Diagnose {
     Initialize-AppDir
     $settings = Read-Settings
     if ([string]::IsNullOrWhiteSpace($settings.ServerHost)) {
-        Write-Host '配置里没有服务器地址，先开界面填一次并保存。'
+        Write-Diag '配置里没有服务器地址，先开界面填一次并保存。'
         exit 2
     }
-    Write-Host ('服务器：{0}@{1}:{2}' -f $settings.ServerUser, $settings.ServerHost, $settings.ServerPort)
-    Write-Host ('私钥：{0}' -f $settings.KeyPath)
-    Write-Host ('本地端口：{0} → 面板 {1}' -f $settings.LocalPort, $Script:PanelPort)
+    Write-Diag ('服务器：{0}@{1}:{2}' -f $settings.ServerUser, $settings.ServerHost, $settings.ServerPort)
+    Write-Diag ('私钥：{0}' -f $settings.KeyPath)
+    Write-Diag ('本地端口：{0} → 面板 {1}' -f $settings.LocalPort, $Script:PanelPort)
     $ok = $false
     try {
         $result = Test-RemoteConnection $settings
-        Write-Host ('[连接测试] {0}' -f $result.Message)
+        Write-Diag ('[连接测试] {0}' -f $result.Message)
         if (-not $result.Ok) { return 1 }
 
         Stop-Tunnel | Out-Null
         $identity = Resolve-IdentityFile $settings
         $process = Start-Tunnel $settings $identity
-        Write-Host ('[隧道] SSH PID {0}' -f $process.Id)
+        Write-Diag ('[隧道] SSH PID {0}' -f $process.Id)
         if (-not (Wait-PortListening -Port $settings.LocalPort -TimeoutSeconds 20)) {
-            Write-Host '[隧道] 失败：本地端口未监听'
-            Write-Host (Get-TunnelLogTail 15)
+            Write-Diag '[隧道] 失败：本地端口未监听'
+            Write-Diag (Get-TunnelLogTail 15)
             return 1
         }
-        Write-Host '[隧道] 本地端口已监听'
+        Write-Diag '[隧道] 本地端口已监听'
+        foreach ($note in $Script:ForwardNotes) { Write-Diag ('[隧道] ' + $note) }
+        foreach ($item in $Script:ServiceForwards) {
+            $state = '未监听'
+            if (Test-PortListening -Port $item.Port) { $state = '已转发' }
+            $probe = ''
+            if ($state -eq '已转发') {
+                try {
+                    $resp = Invoke-WebRequest -Uri ('http://127.0.0.1:{0}/' -f $item.Port) `
+                        -UseBasicParsing -TimeoutSec 6
+                    $probe = 'HTTP {0}' -f $resp.StatusCode
+                } catch {
+                    $probe = '请求失败（服务未启动？）'
+                }
+            }
+            Write-Diag ('[转发] {0}({1}) -> {2} {3}' -f $item.Label, $item.Port, $state, $probe)
+        }
         if (Test-PanelHealth -Port $settings.LocalPort) {
-            Write-Host '[面板] /api/health 200，链路可用'
+            Write-Diag '[面板] /api/health 200，链路可用'
             $ok = $true
         } else {
-            Write-Host '[面板] 无响应'
-            Write-Host (Get-TunnelLogTail 15)
+            Write-Diag '[面板] 无响应'
+            Write-Diag (Get-TunnelLogTail 15)
         }
         return $(if ($ok) { 0 } else { 1 })
     } catch {
-        Write-Host ('[异常] {0}' -f $_.Exception.Message)
+        Write-Diag ('[异常] {0}' -f $_.Exception.Message)
         return 1
     } finally {
         Stop-Tunnel | Out-Null
         Clear-SessionKey
-        Write-Host '[隧道] 已停止，会话私钥已清理'
+        Write-Diag '[隧道] 已停止，会话私钥已清理'
     }
 }
 
@@ -628,7 +680,7 @@ Write-ClientLog '界面初始化……'
 $Script:Settings = Read-Settings
 
 $Script:Form = New-Object Windows.Forms.Form
-$Script:Form.Text = 'Bot Manager 客户端'
+$Script:Form.Text = ('Bot Manager 客户端 {0}' -f $Script:ClientVersion)
 $Script:Form.ClientSize = New-Object Drawing.Size(628, 486)
 $Script:Form.StartPosition = 'CenterScreen'
 $Script:Form.FormBorderStyle = 'FixedSingle'
@@ -861,16 +913,35 @@ $Script:ConnectButton.Add_Click({
         Write-Settings $settings
 
         if (Test-PortListening -Port $settings.LocalPort) {
-            if (Test-PanelHealth -Port $settings.LocalPort) {
-                Set-Status ('已连接：http://127.0.0.1:{0}/' -f $settings.LocalPort)
-                Write-Log '隧道已经在运行，直接打开面板。'
+            $owner = Get-PortOwner $settings.LocalPort
+            $ownerText = '未知进程'
+            if ($owner) { $ownerText = '{0}(PID {1})' -f $owner.Name, $owner.Pid }
+            $healthy = Test-PanelHealth -Port $settings.LocalPort
+            $answer = [Windows.Forms.MessageBox]::Show(
+                ("本机端口 {0} 已被 {1} 占用。`r`n`r`n隧道状态：{2}`r`n`r`n【是】结束它并重新建立本客户端的隧道（推荐）`r`n【否】直接使用已有隧道`r`n【取消】返回，不做任何改动" -f `
+                    $settings.LocalPort, $ownerText, $(if ($healthy) { '可用（面板能响应）' } else { '不可用（面板无响应）' })),
+                '已有隧道', 'YesNoCancel', 'Question')
+            if ($answer -eq 'Cancel') {
+                Set-Status '未改动'
+                return
+            }
+            if ($answer -eq 'Yes') {
+                if (-not $owner -or $owner.Name -notlike 'ssh*') {
+                    [Windows.Forms.MessageBox]::Show(
+                        ('占用端口的是 {0}，不是 ssh，结束它可能会影响其他程序。请手动处理或换一个本地端口。' -f $ownerText),
+                        '端口被占用', 'OK', 'Warning') | Out-Null
+                    return
+                }
+                Stop-Process -Id $owner.Pid -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Milliseconds 600
+                Write-Log ('已结束遗留隧道 {0}。' -f $ownerText)
+            } elseif ($healthy) {
+                $Script:TunnelOwned = $false
+                Set-Status ('已连接（沿用已有隧道）：http://127.0.0.1:{0}/' -f $settings.LocalPort)
+                Write-Log ('沿用已有隧道（{0}）：断开时不会关闭它。' -f $ownerText)
                 if ($settings.OpenBrowser) { Open-Panel $settings }
                 return
             }
-            [Windows.Forms.MessageBox]::Show(
-                ('本地端口 {0} 被其他程序占用，请换一个本地端口再试。' -f $settings.LocalPort),
-                '端口被占用', 'OK', 'Warning') | Out-Null
-            return
         }
 
         Stop-Tunnel | Out-Null
@@ -886,8 +957,10 @@ $Script:ConnectButton.Add_Click({
             Show-TunnelFailure '隧道已建立，但面板没有响应。请确认服务器上 bot-manager 服务在运行。'
             return
         }
+        $Script:TunnelOwned = $true
         Set-Status ('已连接：http://127.0.0.1:{0}/' -f $settings.LocalPort)
         Write-Log ('隧道就绪（SSH PID {0}）。' -f $process.Id)
+        foreach ($note in $Script:ForwardNotes) { Write-Log $note }
         if ($settings.OpenBrowser) { Open-Panel $settings }
     } catch {
         Write-Log ('连接出错：{0}' -f $_.Exception.Message)
@@ -900,13 +973,22 @@ $Script:ConnectButton.Add_Click({
 
 $Script:DisconnectButton.Add_Click({
     try {
+        $settings = Read-FormSettings
         $count = Stop-Tunnel
+        $Script:TunnelOwned = $false
         if ($count -gt 0) {
             Write-Log ('已断开，停止 {0} 个 SSH 进程。' -f $count)
             Set-Status '已断开'
         } else {
-            Write-Log '没有正在运行的隧道。'
+            Write-Log '本客户端没有正在运行的隧道。'
             Set-Status '未连接'
+        }
+        # 断开后如果端口还在监听，说明有别处启动的隧道（例如旧启动脚本），如实说明
+        $owner = Get-PortOwner $settings.LocalPort
+        if ($owner) {
+            Write-Log ('注意：端口 {0} 仍由 {1}(PID {2}) 监听，这不是本客户端启动的隧道，所以没有被关闭。' -f `
+                $settings.LocalPort, $owner.Name, $owner.Pid)
+            Set-Status ('仍有外部隧道占用 {0}' -f $settings.LocalPort)
         }
     } catch {
         Write-Log ('断开出错：{0}' -f $_.Exception.Message)
