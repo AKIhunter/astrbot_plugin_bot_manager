@@ -23,7 +23,7 @@
 | 搜索费用别混进模型账单 | 单独计量 DeepSeek 搜索与网页抓取次数，按你配置的单价换算 |
 | 余额不足先知道 | 按周期查询 DeepSeek 人民币余额，跌破阈值提醒一次；充值后按人设致谢一次，不会循环刷屏 |
 | 提醒发给我或群里 | 插件设置页填 QQ 号与群号即可指定目标，没填时回退到「记住管理员最近会话」的旧行为 |
-| 从插件里配好余额和面板 | 插件设置页可直接填 DeepSeek 密钥与面板账号密码，改动后自动下发到本机面板，改密立即生效 |
+| 从插件里配好余额和面板 | 插件设置页可直接填 DeepSeek 密钥与面板登录密码（账号固定 admin），改动后自动下发到本机面板，改密立即生效 |
 | 手机/异地也能看面板 | 面板绑定 `127.0.0.1`，用客户端配 SSH 私钥建隧道，在自己电脑的浏览器里打开 |
 | 忘了插件有哪些指令 | 读取真实注册表，列出名称、别名、参数、权限与停用状态；查询不会执行命令 |
 
@@ -55,7 +55,7 @@
 | `fallback_auto_channel` | `true` | 关闭后未配置目标就完全不发提醒 |
 | `recharge_thanks_enable` / `recharge_thanks_group` | 均 `true` | 充值致谢开关与是否也发群 |
 | `deepseek_api_key` | 空 | 填了才下发；留空沿用面板里已保存的密钥 |
-| `panel_admin_username` / `panel_admin_password` | 空 | 两者都填才下发，改密后面板热加载生效 |
+| `panel_admin_password` | 空 | 面板账号固定 `admin`（不可改）；填了才下发，改密后面板热加载生效 |
 | `credential_sync_enable` / `credential_sync_interval_minutes` | `true` / `30` | 只在配置指纹变化时推送，不覆盖面板手工修改 |
 | `low_balance_custom_text` / `recharge_thanks_custom_text` | 空 | 留空按人设生成，可用 `{balance}` `{threshold}` 占位 |
 
@@ -78,7 +78,7 @@ Release 附件里的插件 ZIP 是我们自己打包的，只含插件文件。
 
 ## 隐私与凭据
 
-插件配置里的 DeepSeek 密钥与面板账密只在**本机回环**传输：插件用
+插件配置里的 DeepSeek 密钥与面板密码只在**本机回环**传输：插件用
 `/etc/bot-manager/plugin-token` 里的内部令牌调用面板内部接口，面板以 scrypt
 （salt 16 字节、n=2^14、r=8、p=1）保存口令摘要，改密前自动备份并保留 8 份。
 

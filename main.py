@@ -41,7 +41,7 @@ MINIMUM_BALANCE_CHECK_SECONDS = 60
 CATALOG_PATH = NOTIFICATION_STATE_PATH.with_name("command-catalog.json")
 CREDENTIAL_STATE_PATH = NOTIFICATION_STATE_PATH.with_name("credential-sync.json")
 TERMINAL_NOTIFICATION_STATES = {"sent", "unknown"}
-PLUGIN_VERSION = "2.2.0"
+PLUGIN_VERSION = "2.2.1"
 # 凭据下发：只在插件配置变化时推一次，避免把面板里手工改的值盖掉。
 DEFAULT_CREDENTIAL_SYNC_MINUTES = 30
 MINIMUM_CREDENTIAL_SYNC_SECONDS = 300
@@ -49,9 +49,10 @@ CREDENTIAL_ENDPOINTS = {
     "deepseek": "/api/internal/provider-credentials",
     "panel": "/api/internal/panel-credentials",
 }
+# 面板只有 admin 一个账号：安装器、重置脚本与内部接口都写死这个名字。
+PANEL_USERNAME = "admin"
 NOTICE_DEFAULTS = {
     "deepseek_api_key": "",
-    "panel_admin_username": "",
     "panel_admin_password": "",
     "credential_sync_enable": True,
     "credential_sync_interval_minutes": 30,
@@ -346,7 +347,7 @@ class MeteredStream:
     "astrbot_plugin_usage_telemetry",
     "Bot Manager",
     "统一模型和搜索计量、余额提醒及完整指令查询",
-    "2.2.0",
+    "2.2.1",
 )
 class UsageTelemetryPlugin(Star):
     def __init__(self, context: Context, config: dict | None = None):
@@ -559,14 +560,21 @@ class UsageTelemetryPlugin(Star):
         return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
     def _credential_source(self):
+        """面板账号不在配置里开放：安装器、重置脚本和内部接口都只认 admin。"""
         key = str((self.config or {}).get("deepseek_api_key") or "").strip()
-        username = str((self.config or {}).get("panel_admin_username") or "").strip()
         password = str((self.config or {}).get("panel_admin_password") or "").strip()
-        return key, username, password
+        return key, password
+
+    def _legacy_panel_username(self):
+        """老配置里可能有 panel_admin_username；超管账号固定，这里只用于提示。"""
+        legacy = str((self.config or {}).get("panel_admin_username") or "").strip()
+        if legacy and legacy != PANEL_USERNAME:
+            return legacy
+        return ""
 
     def _credential_plan(self):
         """返回 {名称: {fingerprint, payload}}；没配的项就是不下发。"""
-        key, username, password = self._credential_source()
+        key, password = self._credential_source()
         plan = {}
         if key:
             plan["deepseek"] = {
@@ -574,11 +582,11 @@ class UsageTelemetryPlugin(Star):
                 "payload": {"deepseek": {"apiKey": key}},
                 "label": "DeepSeek 余额密钥",
             }
-        if username and password:
+        if password:
             plan["panel"] = {
-                "fingerprint": self._fingerprint(f"panel:{username}:{password}"),
-                "payload": {"username": username, "password": password},
-                "label": "面板登录账密",
+                "fingerprint": self._fingerprint(f"panel:{PANEL_USERNAME}:{password}"),
+                "payload": {"username": PANEL_USERNAME, "password": password},
+                "label": "面板登录密码",
             }
         return plan
 
@@ -696,23 +704,23 @@ class UsageTelemetryPlugin(Star):
             return "凭据下发结果\n" + "\n".join(f"· {line}" for line in results)
         if sub and sub not in ("状态", "status", "查看"):
             raise ValueError("用法：/bm 凭据 或 /bm 凭据 同步")
-        key, username, password = self._credential_source()
+        key, password = self._credential_source()
         state = self._credential_state
         applied = state.get("applied") or {}
         last = state.get("lastRunAt")
         lines = [
             "凭据同步（插件 → 本机面板）",
             f"面板地址：{SERVICE_BASE}",
+            f"登录账号：{PANEL_USERNAME}（固定，不可改）",
             f"自动同步：{'开' if self._conf_bool('credential_sync_enable') else '关'}"
             f"（每 {self._credential_interval_seconds() // 60} 分钟比对一次）",
             "DeepSeek 密钥：" + (
                 f"已配置（指纹 {self._fingerprint('deepseek:' + key)}）"
                 if key else "未配置（沿用面板「接口配置」里已保存的密钥）"
             ),
-            "面板账密：" + (
-                f"已配置（账号 {username}，指纹 "
-                f"{self._fingerprint(f'panel:{username}:{password}')}）"
-                if username and password else "未配置（不改动现有账号密码）"
+            "面板密码：" + (
+                f"已配置（指纹 {self._fingerprint(f'panel:{PANEL_USERNAME}:{password}')}）"
+                if password else "未配置（不改动现有密码）"
             ),
             "已下发：" + (
                 "、".join(sorted(applied)) if applied else "暂无"
@@ -722,6 +730,11 @@ class UsageTelemetryPlugin(Star):
                 if last else "尚未执行"
             ),
         ]
+        legacy = self._legacy_panel_username()
+        if legacy:
+            lines.append(
+                f"注意：配置里还留着旧账号「{legacy}」，已忽略——面板账号固定为 {PANEL_USERNAME}。"
+            )
         for line in (state.get("lastResults") or [])[:4]:
             lines.append(f"· {line}")
         lines.append("发送「/bm 凭据 同步」可立即重新下发。")
@@ -743,6 +756,12 @@ class UsageTelemetryPlugin(Star):
             self._credential_task = asyncio.create_task(self._watch_credentials())
         else:
             logger.info("Bot Manager credential sync disabled by config")
+        legacy_username = self._legacy_panel_username()
+        if legacy_username:
+            logger.warning(
+                "Bot Manager 面板账号固定为 %s，配置里的 %s 已忽略",
+                PANEL_USERNAME, legacy_username,
+            )
         await self._save_command_catalog()
         await self._save_health()
         logger.info("Bot Manager usage telemetry enabled")
@@ -830,6 +849,8 @@ class UsageTelemetryPlugin(Star):
                   "credentials": {
                       "enabled": self._conf_bool("credential_sync_enable"),
                       "panelBase": SERVICE_BASE,
+                      "panelUser": PANEL_USERNAME,
+                      "passwordConfigured": bool(self._credential_source()[1]),
                       "configured": sorted(self._credential_plan()),
                       "applied": sorted(self._credential_state.get("applied") or {}),
                       "lastRunAt": self._credential_state.get("lastRunAt"),

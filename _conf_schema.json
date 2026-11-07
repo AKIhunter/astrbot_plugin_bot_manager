@@ -5,16 +5,10 @@
     "hint": "填 DeepSeek 平台（platform.deepseek.com）的 API Key，形如 sk-xxx。填了之后插件会自动同步到本机面板，由面板负责取余额与采样；留空则沿用面板「接口配置」里已保存的密钥。",
     "default": ""
   },
-  "panel_admin_username": {
-    "description": "管理面板登录账号",
-    "type": "string",
-    "hint": "本机 Web 面板（http://127.0.0.1:17321）的登录账号。配合下面的密码一起填才会生效。",
-    "default": ""
-  },
   "panel_admin_password": {
     "description": "管理面板登录密码",
     "type": "string",
-    "hint": "至少 8 位。填写后插件会把账号密码同步到服务器面板，改完立即生效、无需重启面板。留空表示不改动现有密码。",
+    "hint": "登录账号固定为 admin（面板只有这一个账号，不可修改），这里只填密码，至少 8 位。填写后插件会把密码同步到服务器面板，改完立即生效、无需重启面板。留空表示不改动现有密码；忘了密码可用服务器上的 install-server.sh --reset-panel-password 重置。",
     "default": ""
   },
   "credential_sync_enable": {

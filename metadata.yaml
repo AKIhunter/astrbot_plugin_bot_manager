@@ -1,8 +1,8 @@
 name: astrbot_plugin_usage_telemetry
 display_name: Bot Manager 集成管理
 short_desc: 模型与搜索计量、余额提醒和完整指令查询
-desc: 统一采集模型与向量 Token、DeepSeek 搜索及抓取次数；余额与充值提醒可配置发送目标（QQ 私聊或群），并可在插件里直接配置 DeepSeek 余额密钥与面板登录账密、自动下发到本机面板。内部标识保持兼容。
-version: 2.2.0
+desc: 统一采集模型与向量 Token、DeepSeek 搜索及抓取次数；余额与充值提醒可配置发送目标（QQ 私聊或群），并可在插件里直接配置 DeepSeek 余额密钥与面板登录密码（账号固定 admin）、自动下发到本机面板。内部标识保持兼容。
+version: 2.2.1
 author: Bot Manager
 repo: https://github.com/AKIhunter/astrbot_plugin_bot_manager
 astrbot_version: ">=4.29.0"
@@ -19,7 +19,7 @@ help: |
   /bm 余额：查询 DeepSeek 实时余额
   /bm 通知：查看余额提醒配置与发送目标
   /bm 通知 测试：立即向配置的目标发一条测试消息
-  /bm 凭据：查看 DeepSeek 密钥与面板账密的同步状态
+  /bm 凭据：查看 DeepSeek 密钥与面板密码的同步状态
   /bm 凭据 同步：立即把配置里的凭据下发给面板
 
   【用量统计】

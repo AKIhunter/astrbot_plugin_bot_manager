@@ -1,5 +1,18 @@
 # 更新日志
 
+## 2.2.1 — 2026-11-08
+
+### 变更：面板账号固定为 admin
+
+- 移除配置项 `panel_admin_username`：面板只有 `admin` 一个账号，安装器、
+  `--reset-panel-password` 与内部接口都写死这个名字，配置里再多一个字段只会造成误解。
+- 插件侧只保留 `panel_admin_password` 一项，下发时固定带 `username: admin`；
+  密码字段的说明里直接写明「账号固定 admin」。
+- `/bm 凭据` 增加「登录账号：admin（固定，不可改）」一行，健康快照新增
+  `panelUser` 与 `passwordConfigured` 两个可见字段。
+- 旧配置若仍保留 `panel_admin_username`，插件会忽略并在日志与 `/bm 凭据` 中提示一次。
+- 指纹算法不变（`panel:admin:<密码>`），对已有安装不会触发多余的下发与写盘。
+
 ## 2.2.0 — 2026-11-08
 
 ### 新增：凭据可以在插件里配
