@@ -1096,21 +1096,21 @@
             <div class="service-grid">
               <article class="service-card" data-service-card="astrbot">
                 <header>
-                  <div class="service-name"><div class="service-glyph">A</div><div><h3>AstrBot</h3><p class="meta">WebUI · 本地端口 16185</p></div></div>
+                  <div class="service-name"><div class="service-glyph">A</div><div><h3>AstrBot</h3><p class="meta">WebUI · 本地端口 <span data-port-for="astrbot">6185</span></p></div></div>
                   <span class="status-pill service-state"><span class="status-dot"></span><span>检测中</span></span>
                 </header>
                 <div class="actions"><a class="button primary external-link" data-url="astrbot" target="_blank" rel="noreferrer">新窗口打开</a></div>
               </article>
               <article class="service-card" data-service-card="snowluma">
                 <header>
-                  <div class="service-name"><div class="service-glyph">S</div><div><h3>SnowLuma</h3><p class="meta">WebUI · 本地端口 15099</p></div></div>
+                  <div class="service-name"><div class="service-glyph">S</div><div><h3>SnowLuma</h3><p class="meta">WebUI · 本地端口 <span data-port-for="snowluma">5099</span></p></div></div>
                   <span class="status-pill service-state"><span class="status-dot"></span><span>检测中</span></span>
                 </header>
                 <div class="actions"><a class="button primary external-link" data-url="snowluma" target="_blank" rel="noreferrer">新窗口打开</a></div>
               </article>
               <article class="service-card" data-service-card="novnc">
                 <header>
-                  <div class="service-name"><div class="service-glyph">Q</div><div><h3>QQ 扫码</h3><p class="meta">noVNC · 本地端口 16081</p></div></div>
+                  <div class="service-name"><div class="service-glyph">Q</div><div><h3>QQ 扫码</h3><p class="meta">noVNC · 本地端口 <span data-port-for="novnc">6081</span></p></div></div>
                   <span class="status-pill service-state"><span class="status-dot"></span><span>检测中</span></span>
                 </header>
                 <div class="actions"><a class="button primary external-link" data-url="novnc" target="_blank" rel="noreferrer">新窗口打开</a></div>
@@ -1214,7 +1214,7 @@
 
         <section class="view" id="view-astrbot" role="tabpanel" hidden>
           <div class="tool-frame">
-            <div class="tool-bar"><div><strong>AstrBot WebUI</strong><span>通过 127.0.0.1:16185 访问</span></div><a class="button external-link" data-url="astrbot" target="_blank" rel="noreferrer"><span aria-hidden="true">↗</span><span class="button-label">新窗口打开</span></a></div>
+            <div class="tool-bar"><div><strong>AstrBot WebUI</strong><span>通过 <span data-endpoint-for="astrbot">127.0.0.1:6185</span> 访问</span></div><a class="button external-link" data-url="astrbot" target="_blank" rel="noreferrer"><span aria-hidden="true">↗</span><span class="button-label">新窗口打开</span></a></div>
             <div class="launch-panel">
               <h2>AstrBot 需要在新窗口中使用</h2>
               <p>AstrBot 的安全策略不允许嵌入其他页面。SSH 隧道已经将它映射到本机回环地址。</p>
@@ -1226,7 +1226,7 @@
 
         <section class="view" id="view-snowluma" role="tabpanel" hidden>
           <div class="tool-frame">
-            <div class="tool-bar"><div><strong>SnowLuma WebUI</strong><span>通过 127.0.0.1:15099 访问</span></div><a class="button external-link" data-url="snowluma" target="_blank" rel="noreferrer"><span aria-hidden="true">↗</span><span class="button-label">新窗口打开</span></a></div>
+            <div class="tool-bar"><div><strong>SnowLuma WebUI</strong><span>通过 <span data-endpoint-for="snowluma">127.0.0.1:5099</span> 访问</span></div><a class="button external-link" data-url="snowluma" target="_blank" rel="noreferrer"><span aria-hidden="true">↗</span><span class="button-label">新窗口打开</span></a></div>
             <div class="launch-panel">
               <h2>SnowLuma 需要在新窗口中使用</h2>
               <p>新窗口仍通过 SSH 隧道访问，不会把 SnowLuma 暴露到公网。</p>
@@ -3766,6 +3766,17 @@
         try {
           state.config = await getJson("/api/config");
           $$(".external-link").forEach(link => { link.href = state.config.urls[link.dataset.url]; });
+          // 页面上的端口文案跟随后端配置，换端口时不用改 HTML
+          $$("[data-port-for]").forEach(el => {
+            const url = state.config.urls[el.dataset.portFor];
+            if (!url) return;
+            el.textContent = new URL(url).port || (new URL(url).protocol === "https:" ? "443" : "80");
+          });
+          $$("[data-endpoint-for]").forEach(el => {
+            const url = state.config.urls[el.dataset.endpointFor];
+            if (!url) return;
+            el.textContent = new URL(url).host;
+          });
           // 隧道目标由运维写在服务器端配置里；仓库默认只给占位符，避免把地址硬编码进模板
           if (state.config.tunnel) {
             const target = $("#tunnel-target");

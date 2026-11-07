@@ -56,9 +56,24 @@ sudo sh service/install-server.sh service
 | `/etc/bot-manager/plugin-token` | 插件调用内部接口的令牌 | `0640 root:astrbot` |
 | `/etc/bot-manager/model-pricing.json` | 单价与优惠时段 | `0600 root:root` |
 | `/etc/bot-manager/tunnel-target` | 面板侧栏显示的隧道目标（可选） | `0640 root:astrbot` |
+| `/etc/bot-manager/external-urls.json` | 面板三个入口地址（可选，只接受回环地址） | `0640 root:astrbot` |
 | `/var/lib/bot-manager/metrics.db` | 资源采样、搜索流水、余额快照 | `astrbot` 可写 |
 
 面板只监听 `127.0.0.1:17321`，不对公网开放；访问方式见[客户端与 SSH 隧道](client.md)。
+
+面板里「新窗口打开」的三个入口（AstrBot / SnowLuma / noVNC）默认指向
+`127.0.0.1:6185`、`127.0.0.1:5099`、`127.0.0.1:6081/vnc.html`。端口不同时写
+`/etc/bot-manager/external-urls.json` 覆盖：
+
+```json
+{
+  "astrbot": "http://127.0.0.1:6185/",
+  "snowluma": "http://127.0.0.1:5099/",
+  "novnc": "http://127.0.0.1:6081/vnc.html?autoconnect=1&resize=scale"
+}
+```
+
+只接受 `127.0.0.1` / `localhost` 开头的地址，其他值会被忽略，重启 `bot-manager` 生效。
 
 ### 重置面板密码
 

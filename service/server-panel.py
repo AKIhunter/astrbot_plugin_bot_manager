@@ -25,6 +25,28 @@ PANEL_FILE = ROOT / "panel.html"
 AGENT_FILE = ROOT / "server-agent.py"
 MONITOR_FILE = ROOT / "server-monitor.py"
 ALLOWED_LOG_SERVICES = {"astrbot", "snowluma", "novnc", "onebot"}
+# 面板「新窗口打开」用的本机地址；可用 /etc/bot-manager/external-urls.json 覆盖
+DEFAULT_EXTERNAL_URLS = {
+    "astrbot": "http://127.0.0.1:6185/",
+    "snowluma": "http://127.0.0.1:5099/",
+    "novnc": "http://127.0.0.1:6081/vnc.html?autoconnect=1&resize=scale",
+}
+
+
+def load_external_urls(path):
+    """只接受回环地址，避免把面板链接指到外部站点。"""
+    urls = dict(DEFAULT_EXTERNAL_URLS)
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return urls
+    if not isinstance(payload, dict):
+        return urls
+    for key in urls:
+        value = payload.get(key)
+        if isinstance(value, str) and value.startswith(("http://127.0.0.1:", "http://localhost:")):
+            urls[key] = value[:2048]
+    return urls
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
 MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 256
@@ -457,14 +479,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(
                     200,
                     {
-                        "urls": {
-                            "astrbot": "http://127.0.0.1:16185/",
-                            "snowluma": "http://127.0.0.1:15099/",
-                            "novnc": (
-                                "http://127.0.0.1:16081/vnc.html"
-                                "?autoconnect=1&resize=scale"
-                            ),
-                        },
+                        "urls": self.server.external_urls,
                         "refreshSeconds": 10,
                         # 运维写在 /etc/bot-manager/tunnel-target 里；缺失时前端保留占位符
                         "tunnel": self.server.tunnel_target,
@@ -762,6 +777,10 @@ def main():
         "--tunnel-target",
         default="/etc/bot-manager/tunnel-target",
     )
+    parser.add_argument(
+        "--external-urls",
+        default="/etc/bot-manager/external-urls.json",
+    )
     args = parser.parse_args()
     if args.host not in {"127.0.0.1", "::1"}:
         parser.error("the panel may only bind to a loopback address")
@@ -774,6 +793,7 @@ def main():
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.tunnel_target = tunnel_target
+    server.external_urls = load_external_urls(args.external_urls)
     server.credentials_path = Path(args.credentials)
     server.credentials = CredentialVerifier(args.credentials)
     server.auth = AuthGuard(server.credentials)
