@@ -168,7 +168,8 @@ settings_complete() {
 keychain_set() {
     local account="$1" value="$2"
     security delete-generic-password -a "$account" -s "$KEYCHAIN_SERVICE" >/dev/null 2>&1 || true
-    printf '%s' "$value" | security add-generic-password -a "$account" -s "$KEYCHAIN_SERVICE" -w "$(cat)" -U >/dev/null 2>&1
+    # security 只能从 argv 取密码，参数会在瞬间出现在 ps 里；单人 Mac 可接受
+    security add-generic-password -a "$account" -s "$KEYCHAIN_SERVICE" -w "$value" -U >/dev/null 2>&1
 }
 
 keychain_get() {
@@ -302,13 +303,16 @@ EOF
 
     local passphrase
     passphrase="$(keychain_get "key-passphrase")"
-    local -a askenv=()
+    # bash 3.2（macOS 自带）在 set -u 下展开空数组会报 unbound variable，
+    # 所以这里始终用一个非空的命令数组，而不是 conditionally 展开 askenv
+    local -a command=()
     if [ -n "$passphrase" ]; then
         install_askpass
-        askenv=(env "SSH_ASKPASS=$ASKPASS_FILE" "SSH_ASKPASS_REQUIRE=force" "BM_ASKPASS_ACCOUNT=key-passphrase")
+        command=(env "SSH_ASKPASS=$ASKPASS_FILE" "SSH_ASKPASS_REQUIRE=force" "BM_ASKPASS_ACCOUNT=key-passphrase")
     fi
+    command+=("$SSH_BIN")
 
-    "${askenv[@]}" "$SSH_BIN" "${args[@]}" </dev/null >/dev/null 2>&1 &
+    "${command[@]}" "${args[@]}" </dev/null >/dev/null 2>&1 &
     local pid=$!
     cleanup_askpass
     printf '%s' "$pid" > "$PID_FILE"
