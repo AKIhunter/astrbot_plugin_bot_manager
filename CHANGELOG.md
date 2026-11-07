@@ -1,5 +1,22 @@
 # 更新日志
 
+## 2.2.4 — 2026-11-08（客户端与服务，插件包不变）
+
+### 新增：客户端内置三个服务的密码重置
+
+- 客户端底部新增「服务密码重置」分组，可一键重置 **AstrBot / SnowLuma / noVNC** 的登录密码。
+- 服务端新增 `reset-service-password.py`：密码从 stdin 读，不进 argv；改完立刻用新密码试登录，
+  成功才回 `ok`，失败把服务端原因原样带回。
+- 各目标的实际改动：
+  - AstrBot：重写 `cmd_config.json` 的 pbkdf2 摘要 + `systemctl restart astrbot`；
+  - SnowLuma：重写 `webui.json`（scrypt N=16384,r=8,p=1,dklen=64）+ 只重启 `snowluma` 进程（QQ 不掉线）；
+  - VNC：写 `vnc-password`、重生成 `/root/.vnc/passwd`、重启 x11vnc（RFB 限制密码最长 8 位）。
+- 客户端新增 `-ResetTarget <astrbot|snowluma|vnc>` 无界面模式，密码从 stdin 读，输出 JSON。
+
+### 修正
+
+- 面板三个入口端口（上一版改成服务器侧 6185/5099/6081）与客户端转发口径对齐。
+
 ## 2.2.3 — 2026-11-08（客户端与服务，插件包不变）
 
 ### 客户端：多端口转发 + 遗留隧道处理

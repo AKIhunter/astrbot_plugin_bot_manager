@@ -12,7 +12,8 @@
 param(
     [switch]$SelfTest,
     [switch]$Diagnose,
-    [string]$DumpLayout
+    [string]$DumpLayout,
+    [string]$ResetTarget
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,7 +38,14 @@ $Script:ServiceForwards = @(
     @{ Port = 5099; Label = 'SnowLuma' },
     @{ Port = 6081; Label = 'noVNC' }
 )
-$Script:ClientVersion = '2.2.3'
+$Script:ClientVersion = '2.2.4'
+# 服务端密码重置脚本（随配套服务一起发布）
+$Script:ResetScript = '/opt/bot-manager/current/reset-service-password.py'
+$Script:ServiceTargets = @(
+    @{ Key = 'astrbot'; Label = 'AstrBot'; Max = 128; Note = '账号固定 astrbot' },
+    @{ Key = 'snowluma'; Label = 'SnowLuma'; Max = 128; Note = '账号 admin，只重启 bridge' },
+    @{ Key = 'vnc'; Label = 'noVNC / VNC'; Max = 8; Note = 'VNC 限 8 位' }
+)
 $Script:ForwardNotes  = @()
 $Script:TunnelOwned   = $false
 $Script:TunnelPid     = 0
@@ -151,6 +159,186 @@ function Write-Log([string]$Message) {
 function Set-Status([string]$Message) {
     if ($null -ne $Script:StatusLabel) {
         $Script:StatusLabel.Text = $Message
+    }
+}
+
+function Invoke-SshWithInput([string[]]$Arguments, [string]$InputText) {
+    # 密码走 stdin，不要放进命令行参数（远端 ps 能看到 argv）
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $Script:SshExe
+    $info.Arguments = (Join-Arguments $Arguments)
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardInput = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::Start($info)
+    $errorTask = $process.StandardError.ReadToEndAsync()
+    try {
+        $process.StandardInput.Write($InputText)
+        $process.StandardInput.Close()
+    } catch { }
+    $output = $process.StandardOutput.ReadToEnd()
+    $errors = $errorTask.Result
+    $process.WaitForExit()
+    $code = $process.ExitCode
+    $process.Dispose()
+    return @{ Code = $code; Text = (($output + $errors).Trim()) }
+}
+
+function Show-PasswordDialog([string]$Title, [string]$Hint, [int]$MaxLength) {
+    $dialog = New-Object Windows.Forms.Form
+    $dialog.Text = $Title
+    $dialog.ClientSize = New-Object Drawing.Size(420, 190)
+    $dialog.StartPosition = 'CenterParent'
+    $dialog.FormBorderStyle = 'FixedDialog'
+    $dialog.MaximizeBox = $false
+    $dialog.MinimizeBox = $false
+
+    $labelHint = New-Object Windows.Forms.Label
+    $labelHint.Text = $Hint
+    $labelHint.Location = New-Object Drawing.Point(14, 12)
+    $labelHint.Size = New-Object Drawing.Size(392, 34)
+    $dialog.Controls.Add($labelHint)
+
+    $labelNew = New-Object Windows.Forms.Label
+    $labelNew.Text = '新密码'
+    $labelNew.Location = New-Object Drawing.Point(14, 52)
+    $labelNew.Size = New-Object Drawing.Size(60, 20)
+    $dialog.Controls.Add($labelNew)
+    $boxNew = New-Object Windows.Forms.TextBox
+    $boxNew.Location = New-Object Drawing.Point(80, 49)
+    $boxNew.Size = New-Object Drawing.Size(320, 24)
+    $boxNew.UseSystemPasswordChar = $true
+    $boxNew.MaxLength = $MaxLength
+    $dialog.Controls.Add($boxNew)
+
+    $labelAgain = New-Object Windows.Forms.Label
+    $labelAgain.Text = '再输一次'
+    $labelAgain.Location = New-Object Drawing.Point(14, 88)
+    $labelAgain.Size = New-Object Drawing.Size(60, 20)
+    $dialog.Controls.Add($labelAgain)
+    $boxAgain = New-Object Windows.Forms.TextBox
+    $boxAgain.Location = New-Object Drawing.Point(80, 85)
+    $boxAgain.Size = New-Object Drawing.Size(320, 24)
+    $boxAgain.UseSystemPasswordChar = $true
+    $boxAgain.MaxLength = $MaxLength
+    $dialog.Controls.Add($boxAgain)
+
+    $labelTip = New-Object Windows.Forms.Label
+    $labelTip.Text = ('至少 8 位，不能含空格' + $(if ($MaxLength -le 8) { '；该服务上限 8 位' } else { '' }))
+    $labelTip.Location = New-Object Drawing.Point(80, 112)
+    $labelTip.Size = New-Object Drawing.Size(320, 20)
+    $labelTip.ForeColor = [Drawing.Color]::FromArgb(110, 110, 110)
+    $dialog.Controls.Add($labelTip)
+
+    $okButton = New-Object Windows.Forms.Button
+    $okButton.Text = '确定'
+    $okButton.Location = New-Object Drawing.Point(238, 146)
+    $okButton.Size = New-Object Drawing.Size(76, 28)
+    $okButton.DialogResult = 'OK'
+    $dialog.Controls.Add($okButton)
+
+    $cancelButton = New-Object Windows.Forms.Button
+    $cancelButton.Text = '取消'
+    $cancelButton.Location = New-Object Drawing.Point(324, 146)
+    $cancelButton.Size = New-Object Drawing.Size(76, 28)
+    $cancelButton.DialogResult = 'Cancel'
+    $dialog.Controls.Add($cancelButton)
+
+    $dialog.AcceptButton = $okButton
+    $dialog.CancelButton = $cancelButton
+
+    $answer = $null
+    while ($true) {
+        $result = $dialog.ShowDialog($Script:Form)
+        if ($result -ne 'OK') { break }
+        $value = $boxNew.Text
+        if ($value.Length -lt 8) {
+            [Windows.Forms.MessageBox]::Show('密码至少 8 位。', '密码太短', 'OK', 'Warning') | Out-Null
+            continue
+        }
+        if ($value.Length -gt $MaxLength) {
+            [Windows.Forms.MessageBox]::Show(('该服务密码最多 {0} 位。' -f $MaxLength), '密码太长', 'OK', 'Warning') | Out-Null
+            continue
+        }
+        if ($value -match '\s') {
+            [Windows.Forms.MessageBox]::Show('密码不能包含空格等空白字符。', '格式不支持', 'OK', 'Warning') | Out-Null
+            continue
+        }
+        if ($value -ne $boxAgain.Text) {
+            [Windows.Forms.MessageBox]::Show('两次输入不一致。', '确认失败', 'OK', 'Warning') | Out-Null
+            continue
+        }
+        $answer = $value
+        break
+    }
+    $dialog.Dispose()
+    return $answer
+}
+
+function Invoke-ResetRemote($Settings, $Target, [string]$Password) {
+    # 通过 SSH 调用服务器上的重置脚本；密码走 stdin，返回 @{Ok, Message, Detail}
+    $identity = Resolve-IdentityFile $Settings
+    $remote = 'python3 {0} --target {1}' -f $Script:ResetScript, $Target.Key
+    $arguments = @(Get-SshArgs $Settings $identity)
+    $arguments += @(('{0}@{1}' -f $Settings.ServerUser, $Settings.ServerHost), $remote)
+    $result = Invoke-SshWithInput $arguments ($Password + "`n")
+
+    $payload = $null
+    foreach ($line in ($result.Text -split "`r?`n")) {
+        $trimmed = $line.Trim()
+        if ($trimmed.StartsWith('{') -and $trimmed.EndsWith('}')) {
+            try { $payload = $trimmed | ConvertFrom-Json } catch { }
+        }
+    }
+    if ($null -eq $payload) {
+        $detail = $result.Text
+        if (-not $detail) { $detail = ('ssh 退出码 {0}' -f $result.Code) }
+        return @{ Ok = $false; Message = '没有拿到服务端结果'; Detail = $detail }
+    }
+    return @{
+        Ok = [bool]$payload.ok
+        Message = [string]$payload.message
+        Detail = [string]$payload.detail
+    }
+}
+
+function Reset-ServicePassword($Target) {
+    $settings = Read-FormSettings
+    if (-not (Assert-Inputs $settings)) { return }
+
+    $hint = ('重置「{0}」的登录密码。{1}。' -f $Target.Label, $Target.Note)
+    $password = Show-PasswordDialog ('重置 {0} 密码' -f $Target.Label) $hint $Target.Max
+    if ([string]::IsNullOrEmpty($password)) {
+        Write-Log ('已取消重置 {0}。' -f $Target.Label)
+        return
+    }
+
+    $Script:Form.Cursor = [Windows.Forms.Cursors]::WaitCursor
+    Set-Status ('正在重置 {0} 密码…' -f $Target.Label)
+    try {
+        $outcome = Invoke-ResetRemote $settings $Target $password
+        Write-Log ('[{0}] {1}' -f $Target.Label, $outcome.Message)
+        if ($outcome.Detail) { Write-Log ('  ' + $outcome.Detail) }
+        if ($outcome.Ok) {
+            Set-Status ('{0} 密码已重置' -f $Target.Label)
+            $body = $outcome.Message
+            if ($outcome.Detail) { $body += "`r`n`r`n" + $outcome.Detail }
+            $body += "`r`n`r`n新密码就是你刚输入的那个，请到对应页面用新密码登录。"
+            [Windows.Forms.MessageBox]::Show($body, ('{0} 密码已重置' -f $Target.Label), 'OK', 'Information') | Out-Null
+        } else {
+            Set-Status ('{0} 重置失败' -f $Target.Label)
+            $body = "服务端返回失败：`r`n`r`n" + $outcome.Message
+            if ($outcome.Detail) { $body += "`r`n`r`n" + $outcome.Detail }
+            [Windows.Forms.MessageBox]::Show($body, '重置失败', 'OK', 'Warning') | Out-Null
+        }
+    } catch {
+        Write-Log ('重置 {0} 出错：{1}' -f $Target.Label, $_.Exception.Message)
+        Set-Status ('{0} 重置异常' -f $Target.Label)
+        [Windows.Forms.MessageBox]::Show($_.Exception.Message, '重置出错', 'OK', 'Error') | Out-Null
+    } finally {
+        $Script:Form.Cursor = [Windows.Forms.Cursors]::Default
     }
 }
 
@@ -674,6 +862,27 @@ if ($Diagnose) {
     exit (Invoke-Diagnose)
 }
 
+# 无界面重置：新密码从标准输入读一行，输出 JSON（供脚本/自动化使用）
+if ($ResetTarget) {
+    $target = $Script:ServiceTargets | Where-Object { $_.Key -eq $ResetTarget } | Select-Object -First 1
+    if ($null -eq $target) {
+        Write-Output (ConvertTo-Json @{ ok = $false; target = $ResetTarget; message = '未知目标' } -Compress)
+        exit 2
+    }
+    $settings = Read-Settings
+    $password = [Console]::In.ReadLine()
+    if ([string]::IsNullOrEmpty($password)) {
+        Write-Output (ConvertTo-Json @{ ok = $false; target = $ResetTarget; message = '密码为空' } -Compress)
+        exit 2
+    }
+    $outcome = Invoke-ResetRemote $settings $target $password
+    Write-Output (ConvertTo-Json @{
+        ok = $outcome.Ok; target = $ResetTarget
+        message = $outcome.Message; detail = $outcome.Detail
+    } -Compress)
+    if ($outcome.Ok) { exit 0 } else { exit 1 }
+}
+
 # ---------------------------------------------------------------- 界面
 Initialize-AppDir
 Write-ClientLog '界面初始化……'
@@ -681,7 +890,7 @@ $Script:Settings = Read-Settings
 
 $Script:Form = New-Object Windows.Forms.Form
 $Script:Form.Text = ('Bot Manager 客户端 {0}' -f $Script:ClientVersion)
-$Script:Form.ClientSize = New-Object Drawing.Size(628, 486)
+$Script:Form.ClientSize = New-Object Drawing.Size(628, 592)
 $Script:Form.StartPosition = 'CenterScreen'
 $Script:Form.FormBorderStyle = 'FixedSingle'
 $Script:Form.MaximizeBox = $false
@@ -775,11 +984,36 @@ $Script:StatusLabel.Size = New-Object Drawing.Size(600, 20)
 $Script:StatusLabel.ForeColor = [Drawing.Color]::FromArgb(70, 70, 70)
 $Script:Form.Controls.Add($Script:StatusLabel)
 
+$Script:ResetGroup = New-Object Windows.Forms.GroupBox
+$Script:ResetGroup.Text = '服务密码重置（通过 SSH 在服务器上执行）'
+$Script:ResetGroup.Location = New-Object Drawing.Point(12, 282)
+$Script:ResetGroup.Size = New-Object Drawing.Size(604, 92)
+$Script:Form.Controls.Add($Script:ResetGroup)
+
+$Script:ResetButtons = @()
+for ($i = 0; $i -lt $Script:ServiceTargets.Count; $i++) {
+    $target = $Script:ServiceTargets[$i]
+    $button = New-Object Windows.Forms.Button
+    $button.Text = ('重置 {0} 密码…' -f $target.Label)
+    $button.Location = New-Object Drawing.Point((14 + $i * 196), 24)
+    $button.Size = New-Object Drawing.Size(184, 28)
+    $button.Tag = $target
+    $Script:ResetGroup.Controls.Add($button)
+    $Script:ResetButtons += $button
+}
+
+$Script:ResetNote = New-Object Windows.Forms.Label
+$Script:ResetNote.Text = '密码只经 stdin 传给服务器，不写入命令历史；失败会原样返回服务端原因。'
+$Script:ResetNote.Location = New-Object Drawing.Point(16, 60)
+$Script:ResetNote.Size = New-Object Drawing.Size(576, 20)
+$Script:ResetNote.ForeColor = [Drawing.Color]::FromArgb(110, 110, 110)
+$Script:ResetGroup.Controls.Add($Script:ResetNote)
+
 $Script:LogBox = New-Object Windows.Forms.TextBox
 $Script:LogBox.Multiline = $true
 $Script:LogBox.ReadOnly = $true
 $Script:LogBox.ScrollBars = 'Vertical'
-$Script:LogBox.Location = New-Object Drawing.Point(12, 282)
+$Script:LogBox.Location = New-Object Drawing.Point(12, 388)
 $Script:LogBox.Size = New-Object Drawing.Size(604, 190)
 $Script:LogBox.BackColor = [Drawing.Color]::FromArgb(250, 250, 250)
 $Script:LogBox.Font = New-Object Drawing.Font('Consolas', 9)
@@ -1018,6 +1252,16 @@ $Script:OpenButton.Add_Click({
         Write-Log ('打开面板出错：{0}' -f $_.Exception.Message)
     }
 })
+
+foreach ($resetButton in $Script:ResetButtons) {
+    $resetButton.Add_Click({
+        try {
+            Reset-ServicePassword $this.Tag
+        } catch {
+            Write-Log ('重置流程出错：{0}' -f $_.Exception.Message)
+        }
+    })
+}
 
 $Script:Form.Add_FormClosing({
     Stop-Tunnel | Out-Null

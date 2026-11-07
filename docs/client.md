@@ -114,7 +114,33 @@ powershell -NoProfile -STA -File client\BotManagerClient.ps1 -Diagnose
 | 否 | 直接沿用已有隧道；本客户端不会接管，断开时也不会关闭它 |
 | 取消 | 不做任何改动 |
 
-## 八、重新打包
+## 八、服务密码重置
+
+客户端底部「服务密码重置」有三个按钮，通过 SSH 调用服务器上的
+`/opt/bot-manager/current/reset-service-password.py`：
+
+| 目标 | 实际改动 | 影响 |
+| --- | --- | --- |
+| AstrBot | 重写 `cmd_config.json` 的 pbkdf2 摘要并**重启 AstrBot** | 约 10 秒不可用 |
+| SnowLuma | 重写 `/app/data/config/webui.json`（scrypt）并重启 `snowluma` 进程 | 只重启 bridge，**QQ 不掉线** |
+| noVNC / VNC | 写 `/app/data/config/vnc-password`、重生成 `/root/.vnc/passwd`、重启 x11vnc | 已连接的 VNC 会断开，刷新页面重连 |
+
+要点：
+
+- 密码**走 stdin**，不出现在命令行参数或 shell 历史里；服务端脚本也只用 `read` 接收。
+- 重置后服务端会**立刻用新密码试登录**，返回「已重置并验证登录成功」才算成功；
+  失败时把服务端的原始原因带回来，不会假装成功。
+- VNC 密码最长 **8 位**（RFB 协议限制），输入框会限制长度。
+- AstrBot 账号固定 `astrbot`，SnowLuma 账号固定 `admin`，两者都不在重置范围内。
+- 无界面等价的调用方式（密码从标准输入读一行）：
+
+```powershell
+"AstrBot-Temp-2026" | powershell -NoProfile -STA -File client\BotManagerClient.ps1 -ResetTarget astrbot
+```
+
+返回单行 JSON：`{"ok":true,"target":"astrbot","message":"已重置并验证登录成功","detail":"备份：..."}`
+
+## 九、重新打包
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File client\build-client.ps1
@@ -127,7 +153,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File client\build-client.ps1
 - `AppLaunched` 直接写 `powershell.exe ... -File BotManagerClient.ps1`，
   不要再套一层 `.vbs`——部分机器上脚本宿主被策略限制，套一层就拉不起来。
 
-## 九、常见故障
+## 十、常见故障
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |

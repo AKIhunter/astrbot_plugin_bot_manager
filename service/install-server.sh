@@ -65,7 +65,7 @@ for command in python3 systemctl ss; do
   fi
 done
 
-for file in server-panel.py server-agent.py server-monitor.py server-app-metrics.py server-embedding-usage.py server-configure.py panel.html bot-manager.service; do
+for file in server-panel.py server-agent.py server-monitor.py server-app-metrics.py server-embedding-usage.py server-configure.py reset-service-password.py panel.html bot-manager.service; do
   if [ ! -f "$SOURCE_DIR/$file" ]; then
     echo "Missing deployment file: $SOURCE_DIR/$file" >&2
     exit 1
@@ -184,6 +184,7 @@ install -m 0644 "$SOURCE_DIR/server-monitor.py" "$RELEASE_DIR/server-monitor.py"
 install -m 0644 "$SOURCE_DIR/server-app-metrics.py" "$RELEASE_DIR/server-app-metrics.py"
 install -m 0644 "$SOURCE_DIR/server-embedding-usage.py" "$RELEASE_DIR/server-embedding-usage.py"
 install -m 0755 "$SOURCE_DIR/server-configure.py" "$RELEASE_DIR/server-configure.py"
+install -m 0755 "$SOURCE_DIR/reset-service-password.py" "$RELEASE_DIR/reset-service-password.py"
 install -m 0644 "$SOURCE_DIR/panel.html" "$RELEASE_DIR/panel.html"
 install -m 0644 "$SOURCE_DIR/bot-manager.service" "$RELEASE_DIR/bot-manager.service"
 install -d -m 0755 "$RELEASE_DIR/$TELEMETRY_PLUGIN"
@@ -203,6 +204,7 @@ python3 -m py_compile \
   "$RELEASE_DIR/server-app-metrics.py" \
   "$RELEASE_DIR/server-embedding-usage.py" \
   "$RELEASE_DIR/server-configure.py" \
+  "$RELEASE_DIR/reset-service-password.py" \
   "$RELEASE_DIR/$TELEMETRY_PLUGIN"/*.py
 (
   cd "$RELEASE_DIR"
@@ -213,6 +215,7 @@ python3 -m py_compile \
     server-app-metrics.py \
     server-embedding-usage.py \
     server-configure.py \
+    reset-service-password.py \
     panel.html \
     bot-manager.service \
     > SHA256SUMS
