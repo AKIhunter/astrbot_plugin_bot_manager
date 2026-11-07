@@ -8,8 +8,12 @@ import hashlib
 import hmac
 import importlib.util
 import json
+import os
+import re
+import shutil
 import subprocess
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,6 +25,17 @@ PANEL_FILE = ROOT / "panel.html"
 AGENT_FILE = ROOT / "server-agent.py"
 MONITOR_FILE = ROOT / "server-monitor.py"
 ALLOWED_LOG_SERVICES = {"astrbot", "snowluma", "novnc", "onebot"}
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+MIN_PASSWORD_LENGTH = 8
+MAX_PASSWORD_LENGTH = 256
+CREDENTIAL_BACKUP_KEEP = 8
+SCRYPT_PARAMS = {"n": 2**14, "r": 8, "p": 1, "dklen": 32}
+
+
+def running_as_root():
+    """仅在 POSIX 上判断；Windows 上本地跑测试时按非 root 处理。"""
+    geteuid = getattr(os, "geteuid", None)
+    return bool(geteuid) and geteuid() == 0
 SECURITY_HEADERS = {
     "Cache-Control": "no-store",
     "Content-Security-Policy": (
@@ -49,15 +64,59 @@ MONITOR = load_monitor_module()
 
 
 class CredentialVerifier:
+    """面板登录口令校验。文件被改写后按 mtime 自动重载，改密不必重启服务。"""
+
     def __init__(self, path):
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        self.username = str(payload["username"]).encode("utf-8")
-        self.salt = bytes.fromhex(payload["salt"])
-        self.expected = bytes.fromhex(payload["hash"])
-        if not self.username or len(self.salt) < 16 or len(self.expected) < 32:
+        self.path = Path(path)
+        self._lock = threading.Lock()
+        self._mtime = None
+        self.username = b""
+        self.salt = b""
+        self.expected = b""
+        self._read()
+
+    def _read(self):
+        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        username = str(payload["username"]).encode("utf-8")
+        salt = bytes.fromhex(payload["salt"])
+        expected = bytes.fromhex(payload["hash"])
+        if not username or len(salt) < 16 or len(expected) < 32:
             raise ValueError("invalid credential file")
+        self.username = username
+        self.salt = salt
+        self.expected = expected
+        try:
+            self._mtime = self.path.stat().st_mtime_ns
+        except OSError:
+            self._mtime = None
+
+    def refresh(self):
+        try:
+            mtime = self.path.stat().st_mtime_ns
+        except OSError:
+            return
+        if mtime == self._mtime:
+            return
+        with self._lock:
+            try:
+                self._read()
+            except (OSError, ValueError, KeyError, TypeError):
+                # 文件正在替换或内容不合法时保留旧口令，避免把面板直接锁死。
+                pass
+
+    def describe(self):
+        self.refresh()
+        try:
+            updated = int(self.path.stat().st_mtime)
+        except OSError:
+            updated = 0
+        return {
+            "username": self.username.decode("utf-8"),
+            "updatedAt": updated,
+        }
 
     def verify(self, authorization):
+        self.refresh()
         if not authorization or not authorization.startswith("Basic "):
             return False
         try:
@@ -71,14 +130,58 @@ class CredentialVerifier:
         actual = hashlib.scrypt(
             password.encode("utf-8"),
             salt=self.salt,
-            n=2**14,
-            r=8,
-            p=1,
-            dklen=len(self.expected),
+            **SCRYPT_PARAMS,
         )
         return hmac.compare_digest(
             username.encode("utf-8"), self.username
         ) and hmac.compare_digest(actual, self.expected)
+
+
+def prune_credential_backups(path):
+    backups = sorted(Path(path).parent.glob(f"{Path(path).name}.bak.*"))
+    for item in backups[:-CREDENTIAL_BACKUP_KEEP]:
+        try:
+            item.unlink()
+        except OSError:
+            pass
+
+
+def write_panel_credentials(path, username, password):
+    """把新口令写成 scrypt 摘要；返回可回传的最小描述，不包含任何密钥材料。"""
+    path = Path(path)
+    username = "" if username is None else str(username).strip()
+    if not USERNAME_RE.fullmatch(username):
+        raise ValueError("用户名需为 1-64 位字母、数字、点、下划线或短横线")
+    if not isinstance(password, str):
+        raise ValueError("密码格式不正确")
+    password = password.strip()
+    if not MIN_PASSWORD_LENGTH <= len(password) <= MAX_PASSWORD_LENGTH:
+        raise ValueError(
+            f"密码长度需在 {MIN_PASSWORD_LENGTH}-{MAX_PASSWORD_LENGTH} 之间"
+        )
+    salt = os.urandom(16)
+    digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, **SCRYPT_PARAMS)
+    payload = {"username": username, "salt": salt.hex(), "hash": digest.hex()}
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if path.exists():
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        backup = path.with_name(f"{path.name}.bak.{stamp}")
+        try:
+            shutil.copyfile(path, backup)
+            os.chmod(backup, 0o600)
+        except OSError:
+            pass
+        prune_credential_backups(path)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+    if running_as_root():
+        os.chown(path, 0, 0)
+    return {"username": username, "updatedAt": int(time.time())}
 
 
 class InternalTokenVerifier:
@@ -202,6 +305,30 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 )
             return
+        if request.path == "/api/internal/credentials":
+            if not self.server.internal_token.verify(
+                self.headers.get("X-Bot-Manager-Token")
+            ):
+                self.send_json(403, {"ok": False, "error": "Forbidden."})
+                return
+            try:
+                summary = self.server.balances.config_summary()
+            except (OSError, ValueError) as exc:
+                summary = {"error": str(exc)[:200]}
+            self.send_json(
+                200,
+                {
+                    "ok": True,
+                    "panel": self.server.credentials.describe(),
+                    "provider": {
+                        "deepseek": (summary or {}).get("deepseek") or {},
+                        "configured": bool(
+                            ((summary or {}).get("deepseek") or {}).get("configured")
+                        ),
+                    },
+                },
+            )
+            return
         if request.path != "/api/health" and not self.authenticated():
             self.request_authentication()
             return
@@ -223,13 +350,22 @@ class Handler(BaseHTTPRequestHandler):
                             ),
                         },
                         "refreshSeconds": 10,
+                        # 运维写在 /etc/bot-manager/tunnel-target 里；缺失时前端保留占位符
+                        "tunnel": self.server.tunnel_target,
                     },
                 )
             elif request.path == "/api/status":
                 self.send_json(200, run_agent("status"))
             elif request.path == "/api/metrics":
-                range_name = parse_qs(request.query).get("range", ["24h"])[0]
-                self.send_json(200, self.server.metrics.query(range_name))
+                query = parse_qs(request.query)
+                range_name = query.get("range", ["24h"])[0]
+                app_id = query.get("app", ["server"])[0]
+                try:
+                    payload = self.server.metrics.query(range_name, app_id)
+                except ValueError:
+                    self.send_json(400, {"ok": False, "error": "Unknown metrics range or application."})
+                    return
+                self.send_json(200, payload)
             elif request.path == "/api/balances":
                 force = parse_qs(request.query).get("refresh", ["0"])[0] == "1"
                 self.send_json(200, self.server.balances.get(force=force))
@@ -342,6 +478,70 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_json(200, {"ok": True, "accepted": accepted})
 
+    def read_internal_payload(self, limit=8192):
+        """内部接口的公共前半段：令牌校验 + JSON 体积限制，失败时已自行回包。"""
+        if not self.server.internal_token.verify(
+            self.headers.get("X-Bot-Manager-Token")
+        ):
+            self.send_json(403, {"ok": False, "error": "Forbidden."})
+            return None
+        if self.headers.get_content_type() != "application/json":
+            self.send_json(415, {"ok": False, "error": "JSON content is required."})
+            return None
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 2 or length > limit:
+                raise ValueError("payload size out of range")
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, OSError, UnicodeDecodeError) as exc:
+            self.send_json(400, {"ok": False, "error": str(exc)[:200]})
+            return None
+        if not isinstance(payload, dict):
+            self.send_json(400, {"ok": False, "error": "payload must be an object"})
+            return None
+        return payload
+
+    def handle_internal_provider_credentials(self):
+        """插件把配置里的余额服务凭据下发给面板，由面板负责落盘与采样。"""
+        payload = self.read_internal_payload()
+        if payload is None:
+            return
+        update = payload.get("provider", payload)
+        if not isinstance(update, dict):
+            self.send_json(400, {"ok": False, "error": "provider must be an object"})
+            return
+        try:
+            summary = self.server.balances.update_config(update)
+        except (MONITOR.ProviderConfigError, ValueError, OSError) as exc:
+            self.send_json(400, {"ok": False, "error": str(exc)[:200]})
+            return
+        self.send_json(
+            200,
+            {
+                "ok": True,
+                "deepseek": summary.get("deepseek") or {},
+                "siliconflow": summary.get("siliconflow") or {},
+            },
+        )
+
+    def handle_internal_panel_credentials(self):
+        """插件把面板登录账号口令下发过来，这里重算 scrypt 摘要并原子替换。"""
+        payload = self.read_internal_payload()
+        if payload is None:
+            return
+        try:
+            result = write_panel_credentials(
+                self.server.credentials_path,
+                payload.get("username"),
+                payload.get("password"),
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            self.send_json(400, {"ok": False, "error": str(exc)[:200]})
+            return
+        # 立刻按新文件重载，无需重启面板。
+        self.server.credentials.refresh()
+        self.send_json(200, {"ok": True, **result})
+
     def do_POST(self):
         if not self.valid_host():
             self.send_json(400, {"ok": False, "error": "Invalid host."})
@@ -349,6 +549,12 @@ class Handler(BaseHTTPRequestHandler):
         request = urlsplit(self.path)
         if request.path == "/api/internal/search-event":
             self.handle_search_event()
+            return
+        if request.path == "/api/internal/provider-credentials":
+            self.handle_internal_provider_credentials()
+            return
+        if request.path == "/api/internal/panel-credentials":
+            self.handle_internal_panel_credentials()
             return
         if not self.authenticated():
             self.request_authentication()
@@ -436,11 +642,23 @@ def main():
         "--usage-pricing",
         default="/etc/bot-manager/model-pricing.json",
     )
+    parser.add_argument(
+        "--tunnel-target",
+        default="/etc/bot-manager/tunnel-target",
+    )
     args = parser.parse_args()
     if args.host not in {"127.0.0.1", "::1"}:
         parser.error("the panel may only bind to a loopback address")
 
+    tunnel_target = ""
+    try:
+        tunnel_target = Path(args.tunnel_target).read_text(encoding="utf-8").strip()[:120]
+    except OSError:
+        tunnel_target = ""
+
     server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server.tunnel_target = tunnel_target
+    server.credentials_path = Path(args.credentials)
     server.credentials = CredentialVerifier(args.credentials)
     server.internal_token = InternalTokenVerifier(args.internal_token)
     server.metrics = MONITOR.MetricsStore(args.metrics_db)
@@ -450,6 +668,10 @@ def main():
         snapshot_store=server.metrics,
     )
     server.balance_sampler = MONITOR.BalanceSampler(server.balances, 60)
+    server.embedding_sampler = MONITOR.EmbeddingUsageSampler(
+        args.usage_db,
+        "/var/lib/astrbot/data/plugin_data/astrbot_plugin_livingmemory/embedding_cache.db",
+    )
     server.usage = MONITOR.UsageReportService(
         args.usage_db,
         args.astrbot_db,
@@ -457,7 +679,8 @@ def main():
         metrics_db=args.metrics_db,
     )
     # 趋势图沿用 60 秒采样；用进程内探针，不再每次跑一遍 docker 状态采集
-    server.probe = MONITOR.SystemProbe()
+    server.probe = MONITOR.SystemProbe(
+        known_applications=server.metrics.query("1h")["applications"])
     server.sampler = MONITOR.ResourceSampler(
         server.metrics,
         server.probe.collect,
@@ -466,10 +689,13 @@ def main():
     server.daemon_threads = True
     server.sampler.start()
     server.balance_sampler.start()
+    server.embedding_sampler.start()
     try:
         server.serve_forever()
     finally:
         server.sampler.stop()
+        server.balance_sampler.stop()
+        server.embedding_sampler.stop()
         server.server_close()
 
 

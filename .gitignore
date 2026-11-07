@@ -1,4 +1,5 @@
 .DS_Store
+Thumbs.db
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -12,8 +13,21 @@ __pycache__/
 *.token
 *.pem
 *.key
+*.ppk
+*.log
 data/
 plugin_data/
 backups/
 *.bak.*
 service/astrbot_plugin_usage_telemetry/
+
+# 客户端：只提交源码，单文件 exe 走 Release 附件
+client/dist/
+client/stage/
+
+# 本地部署状态与凭据，绝不入库
+.state/
+credentials.json
+provider-credentials.json
+plugin-token
+tunnel-target

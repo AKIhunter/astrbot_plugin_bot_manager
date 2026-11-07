@@ -4,6 +4,7 @@
 import base64
 import hashlib
 import hmac
+import importlib.util
 import ipaddress
 import io
 import json
@@ -41,7 +42,13 @@ MAX_PRICE_ENTRIES = 100
 MAX_RESPONSE_BYTES = 1024 * 1024
 HEADER_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,63}$")
 IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+PLUGIN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 JSON_PATH_RE = re.compile(r"^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+|\.[0-9]+)*$")
+PLUGIN_LABEL_ALIASES = {
+    # 技术 ID 为兼容历史用量不改名，只更新面向用户的展示名。
+    "astrbot_plugin_at_guard": "LivingHello",
+    "astrbot_plugin_reply_merge": "回复合并",
+}
 FORBIDDEN_HEADERS = {
     "connection",
     "content-length",
@@ -123,6 +130,27 @@ class MetricsStore:
                 "CREATE INDEX IF NOT EXISTS idx_search_events_timestamp "
                 "ON search_events (timestamp)"
             )
+            # 应用趋势独立存表，保留既有整机历史和消费流水。
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS resource_applications (
+                    app_id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                    scope TEXT NOT NULL, memory_kind TEXT NOT NULL,
+                    parent_id TEXT, first_sample_at INTEGER NOT NULL,
+                    last_sample_at INTEGER NOT NULL
+                )
+            """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS application_resource_samples (
+                    app_id TEXT NOT NULL, timestamp INTEGER NOT NULL,
+                    cpu_percent REAL, memory_percent REAL, memory_bytes INTEGER,
+                    state TEXT NOT NULL,
+                    PRIMARY KEY (app_id, timestamp)
+                )
+            """)
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_app_samples_timestamp "
+                "ON application_resource_samples (timestamp)"
+            )
 
     @staticmethod
     def _percent(used, total):
@@ -151,11 +179,37 @@ class MetricsStore:
                 """,
                 values,
             )
+            for application in (status.get("applications") or [])[:24]:
+                connection.execute("""
+                    INSERT INTO resource_applications
+                        (app_id, name, scope, memory_kind, parent_id, first_sample_at, last_sample_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(app_id) DO UPDATE SET
+                        name=excluded.name, scope=excluded.scope,
+                        memory_kind=excluded.memory_kind, parent_id=excluded.parent_id,
+                        last_sample_at=excluded.last_sample_at
+                """, (application["id"], application["name"], application["scope"],
+                      application["memoryKind"], application.get("parentId"), timestamp, timestamp))
+                connection.execute("""
+                    INSERT OR REPLACE INTO application_resource_samples
+                        (app_id, timestamp, cpu_percent, memory_percent, memory_bytes, state)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (application["id"], timestamp, application.get("cpuPercent"),
+                      application.get("memoryPercent"), application.get("memoryBytes"),
+                      application["state"]))
             # 10 秒一条的采集频率下，不必每次都做过期清理
             if timestamp - self._last_prune >= self.PRUNE_INTERVAL_SECONDS:
                 self._last_prune = timestamp
                 connection.execute(
                     "DELETE FROM resource_samples WHERE timestamp < ?",
+                    (timestamp - self.RETENTION_SECONDS,),
+                )
+                connection.execute(
+                    "DELETE FROM application_resource_samples WHERE timestamp < ?",
+                    (timestamp - self.RETENTION_SECONDS,),
+                )
+                connection.execute(
+                    "DELETE FROM resource_applications WHERE last_sample_at < ?",
                     (timestamp - self.RETENTION_SECONDS,),
                 )
 
@@ -202,7 +256,7 @@ class MetricsStore:
             "byHour": {int(bucket): int(value) for bucket, value in hourly},
         }
 
-    def query(self, range_name):
+    def query(self, range_name, app_id="server"):
         settings = RANGES.get(range_name)
         if not settings:
             raise ValueError("unsupported metrics range")
@@ -210,6 +264,17 @@ class MetricsStore:
         cutoff = now - settings["seconds"]
         bucket = settings["bucket"]
         with closing(self._connect()) as connection:
+            applications = [{
+                "id": row[0], "name": row[1], "scope": row[2],
+                "memoryKind": row[3], "parentId": row[4],
+                "firstSampleAt": row[5], "lastSampleAt": row[6],
+            } for row in connection.execute("""
+                SELECT app_id, name, scope, memory_kind, parent_id, first_sample_at, last_sample_at
+                FROM resource_applications ORDER BY first_sample_at, app_id
+            """).fetchall()]
+            selected = next((item for item in applications if item["id"] == app_id), None)
+            if app_id != "server" and selected is None:
+                raise ValueError("unsupported metrics application")
             rows = connection.execute(
                 """
                 SELECT
@@ -224,10 +289,30 @@ class MetricsStore:
                 ORDER BY bucket_timestamp
                 """,
                 (bucket, bucket, cutoff),
-            ).fetchall()
+            ).fetchall() if app_id == "server" else connection.execute("""
+                SELECT CAST(timestamp / ? AS INTEGER) * ? AS bucket_timestamp,
+                    AVG(cpu_percent), AVG(memory_percent), NULL, COUNT(*),
+                    AVG(memory_bytes),
+                    SUM(CASE WHEN state='unavailable' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN state='warming' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN state='stopped' THEN 1 ELSE 0 END),
+                    MAX(timestamp)
+                FROM application_resource_samples
+                WHERE app_id=? AND timestamp >= ?
+                GROUP BY bucket_timestamp ORDER BY bucket_timestamp
+            """, (bucket, bucket, app_id, cutoff)).fetchall()
+            latest = connection.execute("""
+                SELECT state, timestamp FROM application_resource_samples
+                WHERE app_id=? ORDER BY timestamp DESC LIMIT 1
+            """, (app_id,)).fetchone() if selected else None
+            if selected and latest:
+                selected = {**selected, "state": latest[0] if now - latest[1] <= 150 else "stale"}
         return {
             "ok": True,
             "range": range_name,
+            "applicationId": app_id,
+            "applications": applications,
+            "application": selected,
             "bucketSeconds": bucket,
             "from": cutoff,
             "to": now,
@@ -238,6 +323,11 @@ class MetricsStore:
                     "memoryPercent": round(row[2], 2) if row[2] is not None else None,
                     "diskPercent": round(row[3], 2) if row[3] is not None else None,
                     "sampleCount": row[4],
+                    **({
+                        "memoryBytes": round(row[5]) if row[5] is not None else None,
+                        "missingCount": row[6], "warmingCount": row[7],
+                        "stoppedCount": row[8], "lastTimestamp": row[9],
+                    } if selected else {}),
                 }
                 for row in rows
             ],
@@ -313,14 +403,18 @@ class MetricsStore:
 
 
 class SystemProbe:
-    """进程内极轻量资源探针：只读 /proc 与 statvfs，不启子进程、不查 docker。
+    """每分钟读取 /proc、cgroup、statvfs；应用发现只跑有界 docker ps。
 
-    10 秒一次采集必须便宜：`run_agent("status")` 每次都要跑 docker ps/stats，
-    那是给概览卡片用的，不能拿来喂趋势图。
+    概览用的 docker stats 不参与历史采集，避免频繁启动昂贵的统计子进程。
     """
 
-    def __init__(self):
+    def __init__(self, known_applications=()):
         self._previous = self._cpu_stat()
+        spec = importlib.util.spec_from_file_location(
+            "server_app_metrics", Path(__file__).with_name("server-app-metrics.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.applications = module.ApplicationProbe(known_applications=known_applications)
 
     @staticmethod
     def _cpu_stat():
@@ -330,7 +424,7 @@ class SystemProbe:
         except (OSError, ValueError, IndexError):
             return None
         idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
-        return sum(fields), idle
+        return sum(fields[:8]), idle
 
     def cpu_percent(self):
         current = self._cpu_stat()
@@ -368,14 +462,21 @@ class SystemProbe:
             disk_info = {"total": disk.total, "used": disk.used}
         except OSError:
             disk_info = {"total": 0, "used": 0}
-        return {
+        memory = self._memory()
+        result = {
             "timestamp": int(time.time()),
             "server": {
                 "cpuPercent": cpu,
-                "memory": self._memory(),
+                "memory": memory,
                 "disk": disk_info,
             },
         }
+        try:
+            result["applications"] = self.applications.collect(memory["total"])
+        except Exception:
+            # 应用采集隔离：失败仍保存整机趋势，不输出参数或容器敏感信息。
+            print("application resource probe failed", flush=True)
+        return result
 
 
 class ResourceSampler:
@@ -439,12 +540,55 @@ class BalanceSampler:
             self.stop_event.wait(max(1, self.interval_seconds - elapsed))
 
 
+class EmbeddingUsageSampler(ResourceSampler):
+    """以数据库所属用户导入已登记的网关累计用量，无需重启 AstrBot。"""
+
+    def __init__(self, usage_db, cache_db, interval_seconds=15):
+        self.usage_db = str(usage_db)
+        self.cache_db = str(cache_db)
+        super().__init__(None, None, interval_seconds)
+        self.thread.name = "embedding-usage-sampler"
+
+    def _run(self):
+        helper = Path(__file__).with_name("server-embedding-usage.py")
+        last_error = None
+        while not self.stop_event.is_set():
+            try:
+                command = [shutil.which("python3") or "python3", str(helper),
+                           "--usage-db", self.usage_db, "--cache-db", self.cache_db]
+                if os.geteuid() == 0:
+                    command = ["/usr/sbin/runuser", "-u", "astrbot", "--", *command]
+                result = subprocess.run(command, capture_output=True, text=True, timeout=12)
+                if result.returncode:
+                    raise RuntimeError(result.stderr.strip().splitlines()[-1][:200])
+                health = json.loads(result.stdout).get("health", {})
+                pending_stale = (health.get("oldestPendingAt") and
+                                 time.time() - health["oldestPendingAt"] > 120)
+                if health.get("unknownUpstreamRequests") or health.get("counterMismatch") or pending_stale:
+                    raise RuntimeError(
+                        f"journal usage needs attention: unknown={health.get('unknownUpstreamRequests', 0)}, "
+                        f"counterMismatch={health.get('counterMismatch', False)}"
+                    )
+                last_error = None
+            except Exception as exc:
+                # 同一异常只报一次，跨日/计数回退等待人工核对，避免累计重复入账。
+                error = str(exc)[:200]
+                if error != last_error:
+                    print(f"embedding usage sampler failed: {error}", flush=True)
+                last_error = error
+            self.stop_event.wait(self.interval_seconds)
+
+
 class UsageConfigError(ValueError):
     pass
 
 
 class UsageReportService:
     REPORT_TIMEZONE = ZoneInfo("Asia/Shanghai")
+    API_DISPLAY_NAMES = {
+        "deepseek/deepseek-flash": "deepseek-flash · 思考",
+        "deepseek/deepseek-flash-quiet": "deepseek-flash · 非思考",
+    }
     RANGE_SECONDS = {
         "24h": 24 * 60 * 60,
         "7d": 7 * 24 * 60 * 60,
@@ -465,7 +609,7 @@ class UsageReportService:
     )
 
     def __init__(self, telemetry_db, astrbot_db, pricing_path, metrics_db=None,
-                 astrbot_config=None):
+                 astrbot_config=None, router_config=None, official_reference_path=None):
         self.telemetry_db = Path(telemetry_db)
         self.astrbot_db = Path(astrbot_db)
         self.pricing_path = Path(pricing_path)
@@ -473,17 +617,200 @@ class UsageReportService:
         self.lock = threading.Lock()
         self._search_store = None
         self.astrbot_config = Path(astrbot_config or self.astrbot_db.parent / "cmd_config.json")
+        self.router_config = Path(router_config or self.astrbot_db.parent / "config" /
+                                  "astrbot_plugin_multi_api_router_config.json")
+        self.official_reference_path = Path(official_reference_path or
+            (self.metrics_db.parent if self.metrics_db else self.telemetry_db.parent) /
+            "official-usage-reference.json")
+        self.plugin_root = self.astrbot_db.parent / "plugins"
         self._model_cache = None
         self._model_cache_at = 0
         self._model_lock = threading.Lock()
 
+    @staticmethod
+    def _public_json(path):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8-sig"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    @classmethod
+    def _catalog_display_names(cls, items):
+        """只生成可读标签；目录身份、筛选值和计价键保持原值。"""
+        for item in items:
+            provider_id = str(item.get("providerId") or item.get("id") or "")
+            item["name"] = cls.API_DISPLAY_NAMES.get(provider_id, item["name"])
+
+        for name in {item["name"] for item in items}:
+            twins = [item for item in items if item["name"] == name]
+            if len(twins) < 2:
+                continue
+            candidates = {}
+            for item in twins:
+                parts = [f"模型 {item['model'] or '未识别'}"]
+                if item.get("host"):
+                    parts.append(item["host"])
+                parts.append("路由配置" if item["source"] == "router" else "原生配置")
+                candidate = f"{name} · {' · '.join(parts)}"
+                candidates.setdefault(candidate, []).append(item)
+            for candidate, duplicates in candidates.items():
+                for item in duplicates:
+                    suffix = ""
+                    if len(duplicates) > 1:
+                        # 指纹由稳定身份生成，不依赖加载顺序，也不暴露裸路由 ID。
+                        identity = "\0".join((
+                            str(item.get("source") or ""),
+                            str(item.get("id") or ""),
+                            str(item.get("providerId") or ""),
+                            str(item.get("model") or ""),
+                            str(item.get("host") or ""),
+                        ))
+                        suffix = f" · 配置 {hashlib.sha256(identity.encode()).hexdigest()[:8]}"
+                    item["name"] = candidate + suffix
+
+    def api_catalog(self):
+        """展示目录独立于健康候选；停用 API 的历史账单也能查到配置名。"""
+        router = self._public_json(self.router_config)
+        config = self._public_json(self.astrbot_config)
+        parents = {"multi_api_router", str(router.get("provider_id") or "multi_api_router")}
+        providers = [p for p in config.get("provider", []) if isinstance(p, dict)]
+        for p in providers:
+            if "multi_api_router" in str(p.get("type") or "") or p.get("model") == "automatic":
+                parents.add(str(p.get("id") or "multi_api_router"))
+        items = []
+        for key, upstream in router.items():
+            match = re.fullmatch(r"upstream_(\d+)", key)
+            if not match or not isinstance(upstream, dict) or not upstream.get("model"):
+                continue
+            slot = int(match[1])
+            parent = str(router.get("provider_id") or "multi_api_router")
+            aliases = {f"{p}:{s}" for p in parents for s in
+                       (str(slot), f"upstream_{slot}", f"upstream_{slot}:{slot}")}
+            for p in providers:
+                if p.get("parent_provider_id") in parents and str(p.get("upstream_slot")) == str(slot):
+                    aliases.add(str(p.get("id") or ""))
+            pricing_id = next((str(p.get("id")) for p in providers if str(p.get("id")) in aliases), parent)
+            items.append({"id": f"{parent}:{slot}", "providerId": pricing_id,
+                          "slot": slot, "model": str(upstream["model"]),
+                          "name": str(upstream.get("name") or upstream["model"]),
+                          "source": "router", "enabled": bool(upstream.get("enabled")),
+                          "aliases": sorted(aliases)})
+        sources = {p.get("id"): p for p in config.get("provider_sources", [])
+                   if isinstance(p, dict)}
+        for p in providers:
+            provider_id = str(p.get("id") or "")
+            if self._router_id(provider_id, parents) or p.get("parent_provider_id") in parents:
+                continue
+            model = next((p.get(k) for k in ("embedding_model", "rerank_model", "model",
+                                           "tts_model", "stt_model") if p.get(k)), "")
+            source = sources.get(p.get("provider_source_id"), {})
+            host = urllib.parse.urlparse(str(p.get("api_base") or source.get("api_base") or "")).hostname
+            items.append({"id": provider_id, "providerId": provider_id, "model": str(model),
+                          "name": str(p.get("name") or p.get("display_name") or model or
+                                      "原生模型未识别"), "source": "native",
+                          "host": host or "", "aliases": [provider_id]})
+        self._catalog_display_names(items)
+        return {"parents": sorted(parents), "items": items, "configured": bool(router)}
+
+    @staticmethod
+    def _router_id(provider_id, parents):
+        return any(provider_id == p or re.fullmatch(
+            re.escape(p) + r":(?:upstream_)?\d+(?::\d+)?", provider_id)
+                   for p in parents)
+
+    def _api_identity(self, event, request, catalog):
+        parents = catalog["parents"]
+        origin = str(event.get("provider_id") or "")
+        routed = (event.get("model") == "automatic" or self._router_id(origin, parents)
+                  or any(origin in i["aliases"] for i in catalog["items"]
+                         if i["source"] == "router"))
+        model = str(request.get("model") or event["model"])
+        raw = str(request.get("upstream_provider_id") or request.get("provider_id") or origin)
+        if not routed:
+            raw = origin
+        candidates = [i for i in catalog["items"] if raw in i["aliases"]
+                      and (i["source"] != "router" or i["model"] == model)]
+        if routed and raw in parents:
+            candidates = [i for i in catalog["items"] if i["source"] == "router"
+                          and i["model"] == model]
+        if len(candidates) == 1:
+            item = candidates[0]
+            fallback = routed and item["source"] == "native"
+            return routed, ("fallback:" if fallback else "") + item["id"], (
+                "原生回退：" if fallback else "") + item["name"]
+        if routed:
+            return True, f"unknown:{raw}:{model}", "历史 API 未识别"
+        return False, origin or "unknown", model if not self._router_id(model, parents) else "原生模型未识别"
+
+    def _plugin_label(self, plugin_id):
+        """读取插件公开展示名；技术 ID 和历史用量保持不变。"""
+        plugin_id = str(plugin_id or "")
+        if plugin_id in PLUGIN_LABEL_ALIASES:
+            return PLUGIN_LABEL_ALIASES[plugin_id]
+        if not PLUGIN_ID_RE.fullmatch(plugin_id):
+            return plugin_id or "未知"
+        metadata = self.plugin_root / plugin_id / "metadata.yaml"
+        try:
+            text = metadata.read_text(encoding="utf-8")[:64 * 1024]
+        except OSError:
+            text = ""
+        match = re.search(r"(?m)^display_name\s*:\s*(.*?)\s*$", text)
+        if match:
+            label = match.group(1).split(" #", 1)[0].strip().strip("\"'")
+            if label and label not in {"|", ">", "|-", ">-"}:
+                return label[:128]
+        return plugin_id.removeprefix("astrbot_plugin_") or "未知"
+
+    @staticmethod
+    def _provider_usage_models(config):
+        """只返回模型与类型，不向页面传递 API Key 等连接配置。"""
+        if not isinstance(config, dict):
+            return []
+        sources = {p.get("id"): p for p in (config.get("provider_sources") or [])
+                   if isinstance(p, dict)}
+        models = []
+        for provider in config.get("provider") or []:
+            if not isinstance(provider, dict) or provider.get("enable", True) is False:
+                continue
+            source = sources.get(provider.get("provider_source_id"), {})
+            provider_type = str(provider.get("type") or source.get("type") or "").lower()
+            model = next((provider.get(key) for key in (
+                "embedding_model", "rerank_model", "reranking_model", "model",
+                "tts_model", "stt_model",
+            ) if provider.get(key)), None)
+            if not isinstance(model, str) or not model.strip() or model == "automatic":
+                continue
+            if provider.get("embedding_model") or "embedding" in provider_type:
+                kind = "embedding"
+            elif provider.get("rerank_model") or provider.get("reranking_model") or "rerank" in provider_type:
+                kind = "rerank"
+            elif "tts" in provider_type or "text_to_speech" in provider_type:
+                kind = "tts"
+            elif "stt" in provider_type or "speech_to_text" in provider_type:
+                kind = "stt"
+            else:
+                kind = "llm"
+            models.append({
+                "model": model.strip(), "providerId": str(provider.get("id") or ""),
+                "name": model.strip(), "kind": kind, "source": "configured",
+            })
+        return models
+
     def available_models(self):
-        """读取 automatic 的实时健康列表，不用调用记录推断连接正常。"""
+        """直连及各类 Provider 加上 automatic 健康模型；配置存在不代表连通已验证。"""
         with self._model_lock:
             if self._model_cache and time.monotonic() - self._model_cache_at < 10:
                 return self._model_cache
+            config = {}
             try:
                 config = json.loads(self.astrbot_config.read_text(encoding="utf-8-sig"))
+                if not isinstance(config, dict):
+                    config = {}
+            except (OSError, ValueError, TypeError):
+                pass
+            configured = self._provider_usage_models(config)
+            try:
                 dashboard = config["dashboard"]
                 encode = lambda value: base64.urlsafe_b64encode(value).rstrip(b"=")
                 header = encode(b'{"alg":"HS256","typ":"JWT"}')
@@ -522,6 +849,7 @@ class UsageReportService:
                             "host": item.get("host") or "",
                             "slot": item.get("slot"),
                             "checkedAt": health.get("checked_at"),
+                            "kind": "llm", "source": "router",
                         })
                 result = {
                     "ok": True, "group": "automatic", "models": models,
@@ -531,6 +859,15 @@ class UsageReportService:
                 # 读取失败时不沿用旧的正常列表，以免异常模型继续进入选择框。
                 result = {"ok": False, "group": "automatic", "models": [],
                           "error": "无法读取路由健康状态，请检查 AstrBot 与路由插件。"}
+            # 路由不可用时，仍可登记已配置的向量、语音等模型单价和额度。
+            result["routerModelCount"] = len(result["models"])
+            result["configuredModelCount"] = len(configured)
+            seen = {(p["providerId"], p["model"]) for p in result["models"]}
+            for item in configured:
+                key = (item["providerId"], item["model"])
+                if key not in seen:
+                    result["models"].append(item)
+                    seen.add(key)
             self._model_cache = result
             self._model_cache_at = time.monotonic()
             return result
@@ -829,6 +1166,7 @@ class UsageReportService:
                 "holidayDates",
                 "providerIds",
                 "modelAliases",
+                "inputBatchCnyPerMillion",
                 *self.PRICE_FIELDS,
                 *self.SCHEDULE_PRICE_FIELDS,
             }
@@ -856,7 +1194,7 @@ class UsageReportService:
                 32,
                 required=True,
             )
-            if pricing_mode not in {"flat", "deepseek_peak"}:
+            if pricing_mode not in {"flat", "deepseek_peak", "embedding"}:
                 raise UsageConfigError("pricingMode is unsupported")
             currency = self._text(
                 item.get("currency", "CNY"),
@@ -902,6 +1240,11 @@ class UsageReportService:
                     "modelAliases": item["modelAliases"],
                     "pricingMode": pricing_mode,
                     "holidayDates": sorted(set(normalized_holidays)),
+                    **({
+                        "inputBatchCnyPerMillion": self._decimal(
+                            item.get("inputBatchCnyPerMillion", ""), "inputBatchCnyPerMillion",
+                        ),
+                    } if pricing_mode == "embedding" or "inputBatchCnyPerMillion" in item else {}),
                     **{
                         field: self._decimal(item.get(field, ""), field)
                         for field in self.PRICE_FIELDS
@@ -1028,10 +1371,22 @@ class UsageReportService:
 
     @staticmethod
     def _matches(event, filters):
-        return all(
-            not filters.get(field) or event.get(field) == filters[field]
-            for field in ("plugin_id", "model", "status")
-        )
+        for field in ("plugin_id", "model", "status"):
+            expected = filters.get(field)
+            if not expected:
+                continue
+            if event.get(field) == expected:
+                continue
+            # automatic 是路由总入口：选中它时也要命中共它拆出来的分支记录。
+            if (field == "model" and expected == "automatic"
+                    and (event.get("router_origin") or event.get("requested_model") == "automatic")):
+                continue
+            return False
+        if filters.get("api_id"):
+            if filters["api_id"] == "automatic":
+                return bool(event.get("router_origin"))
+            return event.get("actual_api_id") == filters["api_id"]
+        return True
 
     def _telemetry_events(self, cutoff, now, filters):
         if not self.telemetry_db.exists():
@@ -1057,9 +1412,51 @@ class UsageReportService:
                 """,
                 (cutoff, now),
             ).fetchall()
+            has_receipts = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='usage_reconciliations'"
+            ).fetchone()
+            receipts = {}
+            if has_receipts:
+                receipts = {row["call_id"]: dict(row) for row in connection.execute(
+                    "SELECT r.* FROM usage_reconciliations r JOIN usage_events e "
+                    "ON e.call_id=r.call_id WHERE e.started_at>=? AND e.started_at<=?",
+                    (cutoff, now))}
+            measurements = {}
+            if connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='usage_embedding_measurements'"
+            ).fetchone():
+                measurements = {r["call_id"]: json.loads(r["payload_json"]) for r in
+                                connection.execute(
+                                    "SELECT m.* FROM usage_embedding_measurements m "
+                                    "JOIN usage_events e ON e.call_id=m.call_id "
+                                    "WHERE e.started_at>=? AND e.started_at<=?", (cutoff, now))}
         events = []
         for row in rows:
             event = dict(row)
+            if event["call_id"] in measurements:
+                event.update(measurements[event["call_id"]])
+                event["request_details"] = json.dumps(event["request_details"])
+            if event["call_id"] in receipts:
+                receipt = receipts[event["call_id"]]
+                if receipt["period_start"] >= now:
+                    continue
+                event.update({key: receipt[key] for key in
+                              ("record_type", "note", "period_start", "period_end")})
+                event["fixed_amount_cny"] = receipt["amount_cny"]
+                # 官方免费抵扣保留真实 Token，同时不被当作付费补录。
+                event["official_free_tokens"] = 0
+                try:
+                    evidence = json.loads(receipt["evidence_json"])
+                    free = evidence.get("official_free_tokens", 0)
+                    total = sum(event[field] for field in
+                                ("token_input_other", "token_input_cached", "token_output"))
+                    if (receipt["record_type"] == "official_billing_adjustment"
+                            and type(free) is int and free > 0 and free == total
+                            and Decimal(receipt["amount_cny"]) == 0):
+                        event["official_free_tokens"] = free
+                except (ValueError, TypeError, AttributeError, ArithmeticError):
+                    pass
+                event["latency_ms"] = None
             event["call_kind"] = event.get("call_kind") or "llm"
             if event["usage_known"] is None:
                 event["usage_known"] = any(
@@ -1081,6 +1478,22 @@ class UsageReportService:
             if self._matches(event, filters):
                 events.append(event)
         return events
+
+    def _usage_monitoring(self, now):
+        if not self.telemetry_db.exists():
+            return None
+        with closing(self._read_only(self.telemetry_db)) as connection:
+            row = connection.execute(
+                "SELECT value FROM metadata WHERE key='embedding_gateway_health_v1'"
+            ).fetchone()
+        if not row:
+            return None
+        health = json.loads(row["value"])
+        health["syncLagSeconds"] = max(0, round(now - health.get("lastSyncAt", 0)))
+        health["stale"] = health["syncLagSeconds"] > 90
+        health["pendingStale"] = bool(health.get("oldestPendingAt") and
+                                     now - health["oldestPendingAt"] > 120)
+        return health
 
     def _historical_events(self, cutoff, boundary, filters):
         if not self.astrbot_db.exists():
@@ -1166,6 +1579,9 @@ class UsageReportService:
         atoms = []
         for event in events:
             event["quota_free_tokens"] = 0
+            if (event.get("record_type") == "official_billing_adjustment"
+                    and not event.get("official_free_tokens")):
+                continue
             requests = event.get("request_details") or []
             measured = [r for r in requests if any(r.get(f, 0) for f in (
                 "token_input_other", "token_input_cached", "token_output"))]
@@ -1200,7 +1616,83 @@ class UsageReportService:
                 state["remainingTokens"] = 0
         return list(states.values())
 
+    def _price_call(self, event, prices, catalog):
+        """额度重放后，每个请求仅计价一次；所有投影复用相同核算单元。"""
+        fields = ("token_input_other", "token_input_cached", "token_output")
+        requests = event.get("request_details") or []
+        if event.get("record_type") == "official_billing_adjustment":
+            requests = []
+        units = []
+        for index, request in enumerate(requests or [{}]):
+            atom = dict(event)
+            if requests:
+                atom.update({f: request.get(f, 0) for f in fields})
+                for key in ("started_at", "model", "provider_id", "usage_known",
+                            "quota_free_tokens", "embedding_input_type"):
+                    if key in request:
+                        atom[key] = request[key]
+            atom["request_details"] = []
+            amount, currency, status, price_id, band = self._event_cost(atom, prices)
+            routed, api_id, label = self._api_identity(event, request, catalog)
+            total = sum(atom[f] for f in fields)
+            units.append({
+                "request_index": index, "started_at": atom["started_at"],
+                "model": atom["model"], "provider_id": atom["provider_id"],
+                "actual_api_id": api_id, "api_label": label, "router_origin": routed,
+                **{f: atom[f] for f in fields}, "total_tokens": total,
+                "usage_known": bool(atom["usage_known"]),
+                "amount": amount, "currency": currency, "price_status": status,
+                "price_id": price_id, "price_band": band,
+                "free_tokens": total if status == "free" else atom.get("quota_free_tokens", 0),
+                "pending": amount is None or not atom["usage_known"],
+                "missing_price": amount is None and status == "pending",
+            })
+        event["cost_units"] = units
+        if requests:
+            event.update({f: sum(u[f] for u in units) for f in fields})
+        self._apply_cost_units(event)
+        event["api_label"] = " / ".join(dict.fromkeys(u["api_label"] for u in units))
+        event["router_origin"] = any(u["router_origin"] for u in units)
+
+    @staticmethod
+    def _apply_cost_units(event):
+        units = event["cost_units"]
+        amounts = {}
+        for unit in units:
+            if unit["amount"] is not None:
+                currency = unit["currency"]
+                amounts[currency] = amounts.get(currency, Decimal(0)) + Decimal(unit["amount"])
+        event["knownAmounts"] = {c: format(a.quantize(Decimal("0.00000001")), "f")
+                                 for c, a in sorted(amounts.items())}
+        event["amount"] = next(iter(event["knownAmounts"].values())) if len(amounts) == 1 else None
+        event["amount_currency"] = next(iter(amounts)) if len(amounts) == 1 else None
+        event["amount_cny"] = event["knownAmounts"].get("CNY")
+        event["total_tokens"] = sum(u["total_tokens"] for u in units)
+        event["free_tokens"] = sum(u["free_tokens"] for u in units)
+        event["billable_tokens"] = event["total_tokens"] - event["free_tokens"]
+        event["pendingRequestCount"] = sum(u["pending"] for u in units)
+        event["unknownUsageRequestCount"] = sum(not u["usage_known"] for u in units)
+        event["missingPriceRequestCount"] = sum(u["missing_price"] for u in units)
+        event["unpriced_tokens"] = sum(u["total_tokens"] - u["free_tokens"]
+                                      for u in units if u["amount"] is None)
+        event["amountStatus"] = (
+            "partial" if amounts and event["pendingRequestCount"] else
+            "pending" if not amounts else
+            "free" if all(u["price_status"] == "free" for u in units) else "complete")
+        statuses = {u["price_status"] for u in units}
+        event["price_status"] = (
+            "partial_usage" if event["amountStatus"] == "partial" else
+            next(iter(statuses)) if len(statuses) == 1 else "configured")
+        event["price_id"] = units[0]["price_id"]
+        bands = {u["price_band"] for u in units}
+        event["price_band"] = next(iter(bands)) if len(bands) == 1 else "mixed"
+
     def _event_cost(self, event, prices):
+        if event.get("record_type") == "official_billing_adjustment":
+            # 官方差额金额固定，不因修改单价或额度而再次估算。
+            if event.get("official_free_tokens"):
+                return event["fixed_amount_cny"], "CNY", "free", None, "official_free"
+            return event["fixed_amount_cny"], "CNY", "reconciled", None, "official"
         requests = event.get("request_details") or []
         measured = [
             item for item in requests
@@ -1223,21 +1715,22 @@ class UsageReportService:
                     usage_known=request.get("usage_known", False),
                     request_details=[],
                     quota_free_tokens=request.get("quota_free_tokens", 0),
+                    embedding_input_type=request.get("embedding_input_type")
+                    or event.get("embedding_input_type") or "text",
                 )
                 costs.append(self._event_cost(attempt, prices))
-            if any(item[0] is None for item in costs) or len(
-                {item[1] for item in costs}
-            ) != 1:
+            priced = [item for item in costs if item[0] is not None]
+            if not priced or len({item[1] for item in priced}) != 1:
                 return None, None, "pending", None, None
-            amount = sum((Decimal(item[0]) for item in costs), Decimal("0"))
+            amount = sum((Decimal(item[0]) for item in priced), Decimal("0"))
             known = event.get("usage_known", False)
             status = (
-                "partial_usage" if not known else
+                "partial_usage" if not known or len(priced) != len(costs) else
                 "free" if all(item[2] == "free" for item in costs) else "configured"
             )
             bands = {item[4] for item in costs}
             return (
-                format(amount, "f"), costs[0][1], status, costs[0][3],
+                format(amount, "f"), priced[0][1], status, priced[0][3],
                 next(iter(bands)) if len(bands) == 1 else "mixed",
             )
         # 未返回用量不等于零费用；有部分用量时仍计算已知部分，并另行提示缺口。
@@ -1252,6 +1745,9 @@ class UsageReportService:
             return None, None, "usage_unknown", None, None
         total_tokens = sum(int(event[f] or 0) for f in (
             "token_input_other", "token_input_cached", "token_output"))
+        if usage_known and total_tokens == 0 and event.get("measurement_source") == "livingmemory_journal":
+            # 共享缓存明确没有新增消费，不要求先配单价才能确认零费用。
+            return "0.00000000", "CNY", "free", None, "shared_cache"
         free_tokens = min(total_tokens, int(event.get("quota_free_tokens", 0)))
         if total_tokens and free_tokens == total_tokens:
             return "0.00000000", "CNY", "free" if usage_known else "partial_usage", None, "quota"
@@ -1274,7 +1770,18 @@ class UsageReportService:
             ),
         )
         price_band = "flat"
-        if price["pricingMode"] == "deepseek_peak":
+        if price["pricingMode"] == "embedding":
+            # 多条文本的实时请求仍是文本输入，只有明确标记的 Batch File 才用批量价。
+            input_type = event.get("embedding_input_type") or "text"
+            if input_type not in {"text", "batch_file"} or event.get("token_output"):
+                return None, None, "pending", price["id"], None
+            price_band = "embedding_batch_file" if input_type == "batch_file" else "embedding_text"
+            rate_field = "inputBatchCnyPerMillion" if input_type == "batch_file" else "inputOtherCnyPerMillion"
+            components = (
+                ("token_input_other", rate_field),
+                ("token_input_cached", rate_field),
+            )
+        elif price["pricingMode"] == "deepseek_peak":
             utc_time = datetime.fromtimestamp(event["started_at"], timezone.utc)
             local_date = utc_time.astimezone(self.REPORT_TIMEZONE).date().isoformat()
             is_holiday = local_date in price["holidayDates"]
@@ -1333,10 +1840,22 @@ class UsageReportService:
         return ordered[index]
 
     @staticmethod
+    def _is_observed_only(event):
+        """运行时钩子只证明「发生过一次向量调用」，不携带用量。
+
+        同一批 livingmemory 共享缓存请求，网关流水会另记一条带 Token 的记录
+        （实测 689/785 条在 2 秒内能找到同刻流水，中位差 0.26 秒）。
+        两条并列会把调用次数算成两倍，因此这一类行只保留为观测，不计入调用数。
+        """
+        return (event.get("call_kind") == "embedding"
+                and event.get("source") == "runtime")
+
+    @staticmethod
     def _empty_group(key):
         return {
             "key": key,
             "calls": 0,
+            "observedCalls": 0,
             "failedCalls": 0,
             "inputOther": 0,
             "inputCached": 0,
@@ -1352,45 +1871,108 @@ class UsageReportService:
             "freeTokens": 0,
             "unknownUsageCalls": 0,
             "requestAttempts": 0,
+            "retryAttempts": 0,
             "_latencies": [],
             "_ttfts": [],
+            "_kinds": {},
+            "_providers": {},
         }
 
-    def _group(self, events, field):
+    @staticmethod
+    def _breakdown(buckets):
+        """把按调用类型/供应商的累积分桶转成前端可直接渲染的列表。"""
+        return [
+            dict(key=key, **value)
+            for key, value in sorted(
+                buckets.items(),
+                key=lambda item: (-item[1]["tokens"], -item[1]["calls"], item[0]),
+            )
+        ]
+
+    def _group(self, events, field, with_breakdown=False):
+        """按字段分组累计；with_breakdown 时额外给出调用类型与供应商拆分。
+
+        拆分只给插件汇总用：日/小时×模型的组合行数多，逐行再附拆分会让 payload 白涨几倍。
+        """
         groups = {}
+        call_ids = {}
         for event in events:
             key = event[field]
             group = groups.setdefault(key, self._empty_group(key))
-            group["calls"] += 1
-            group["failedCalls"] += int(event["status"] != "completed")
-            group["unknownUsageCalls"] += int(not event["usage_known"])
-            group["missingPriceCalls"] += int(event["price_status"] == "pending")
+            aggregate = bool(event.get("record_type"))
+            # 仅观测行不参与任何以「次数」为单位的统计，避免同一请求被算成两次。
+            observed = self._is_observed_only(event)
+            counted = 1 if (not aggregate and not observed) else 0
+            if counted:
+                call_ids.setdefault(key, set()).add(event["call_id"])
+            if aggregate:
+                group["aggregateRecords"] = group.get("aggregateRecords", 0) + 1
+            group["calls"] += counted
+            group["observedCalls"] += 1 if (not aggregate and observed) else 0
+            group["failedCalls"] += int(event["status"] != "completed") if counted else 0
+            group["unknownUsageCalls"] += int(not event["usage_known"]) if counted else 0
+            group["missingPriceCalls"] += int(event.get("missingPriceRequestCount", event["price_status"] == "pending") > 0) if counted else 0
+            for name in ("pendingRequestCount", "unknownUsageRequestCount", "missingPriceRequestCount"):
+                group[name] = group.get(name, 0) + event.get(name, 0)
             group["requestAttempts"] += len(event["request_details"])
             group["inputOther"] += event["token_input_other"]
             group["inputCached"] += event["token_input_cached"]
             group["output"] += event["token_output"]
             group["totalTokens"] += event["total_tokens"]
             group["freeTokens"] += event.get("free_tokens", 0)
-            group["_latencies"].append(event["latency_ms"])
-            if event["ttft_ms"] is not None:
-                group["_ttfts"].append(event["ttft_ms"])
-            if event["amount"] is None:
-                group["unpricedCalls"] += 1
-                group["unpricedTokens"] += event.get("billable_tokens", event["total_tokens"])
+            group["retryAttempts"] += int(event.get("retryAttempts") or 0)
+            if with_breakdown:
+                # 「未归属」同时混着对话、向量化网关流水和运行时观测，
+                # 只给一个总数会让人误以为整块都是聊天消费，因此按类型与供应商分开累计。
+                kind_key = event.get("call_kind") or "llm"
+                kind_bucket = group["_kinds"].setdefault(
+                    kind_key,
+                    {"calls": 0, "tokens": 0, "failedCalls": 0, "unknownUsageCalls": 0,
+                     "observedCalls": 0},
+                )
+                kind_bucket["calls"] += counted
+                kind_bucket["tokens"] += event["total_tokens"]
+                kind_bucket["failedCalls"] += int(event["status"] != "completed") if counted else 0
+                kind_bucket["unknownUsageCalls"] += int(not event["usage_known"]) if counted else 0
+                kind_bucket["observedCalls"] += 1 if (not aggregate and observed) else 0
+                provider_key = event.get("provider_id") or "unknown"
+                provider_bucket = group["_providers"].setdefault(
+                    provider_key,
+                    {"calls": 0, "tokens": 0},
+                )
+                provider_bucket["calls"] += counted
+                provider_bucket["tokens"] += event["total_tokens"]
+            if not observed:
+                # 同一请求的延迟已由网关流水那条记录，重复计入会污染分位数。
+                if event["latency_ms"] is not None:
+                    group["_latencies"].append(event["latency_ms"])
+                if event["ttft_ms"] is not None:
+                    group["_ttfts"].append(event["ttft_ms"])
+            amounts = event.get("knownAmounts", {
+                event["amount_currency"]: event["amount"]} if event["amount"] is not None else {})
+            if not amounts:
+                group["unpricedCalls"] += 1 if not observed else 0
             else:
-                group["pricedCalls"] += 1
+                group["pricedCalls"] += counted
                 if event["price_status"] == "free":
-                    group["freeCalls"] += 1
-                currency = event["amount_currency"]
+                    group["freeCalls"] += counted
+            group["unpricedTokens"] += event.get("unpriced_tokens",
+                event.get("billable_tokens", event["total_tokens"]) if not amounts else 0)
+            for currency, amount in amounts.items():
                 group["_knownAmounts"][currency] = (
                     group["_knownAmounts"].get(currency, Decimal("0"))
-                    + Decimal(event["amount"])
+                    + Decimal(amount)
                 )
         output = []
         for group in groups.values():
             latencies = group.pop("_latencies")
             ttfts = group.pop("_ttfts")
             known_amounts = group.pop("_knownAmounts")
+            kinds = group.pop("_kinds")
+            providers = group.pop("_providers")
+            if with_breakdown:
+                group["kinds"] = self._breakdown(kinds)
+                group["providers"] = self._breakdown(providers)
             group["knownAmounts"] = {
                 currency: format(
                     amount.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP),
@@ -1399,60 +1981,217 @@ class UsageReportService:
                 for currency, amount in sorted(known_amounts.items())
             }
             group["knownAmountCny"] = group["knownAmounts"].get("CNY", "0.000000")
+            group["amountStatus"] = (
+                "partial" if known_amounts and group.get("pendingRequestCount") else
+                "pending" if not known_amounts else
+                "free" if group["freeCalls"] == group["calls"] and not any(known_amounts.values()) else "complete")
             group["latencyP50Ms"] = self._percentile(latencies, 0.50)
             group["latencyP95Ms"] = self._percentile(latencies, 0.95)
             group["latencyP99Ms"] = self._percentile(latencies, 0.99)
             group["ttftP95Ms"] = self._percentile(ttfts, 0.95)
             output.append(group)
+        for group in output:
+            group["calls"] = len(call_ids.get(group["key"], set()))
         return sorted(
             output,
             key=lambda item: (item["totalTokens"], item["calls"]),
             reverse=True,
         )
 
-    @staticmethod
-    def _model_events(events):
+    def _model_events(self, events, catalog=None):
         """按供应商请求的实际模型投影；原调用保留，Token 与额度不重新扣减。"""
         output = []
+        catalog = catalog or self.api_catalog()
         token_fields = ("token_input_other", "token_input_cached", "token_output")
         for event in events:
             requests = event.get("request_details") or []
-            if not requests:
-                output.append(dict(event, requested_model=event["model"],
-                                   actual_model_known=event["model"] != "automatic"))
+            if not requests or event.get("record_type") == "official_billing_adjustment":
+                routed, api_id, label = self._api_identity(event, {}, catalog)
+                output.append(dict(
+                    event,
+                    requested_model=event["model"],
+                    actual_model_known=event["model"] != "automatic",
+                    actual_api_id=api_id, api_label=label, router_origin=routed,
+                ))
                 continue
             groups = {}
-            for request in requests:
+            retried = {}
+            for index, request in enumerate(requests):
                 model = request.get("model") or event["model"]
-                groups.setdefault(model, []).append(request)
-            for model, attempts in groups.items():
-                row = dict(event, model=model, requested_model=event["model"],
-                           actual_model_known=model != "automatic", request_details=attempts)
+                routed, api_id, label = self._api_identity(event, request, catalog)
+                key = (api_id, model)
+                groups.setdefault(key, []).append((index, request, label, routed))
+                # 同一调用的第 2 次及以后的上游尝试属于重试，用于区分「独立调用」与「兜底尝试」。
+                if index:
+                    retried[key] = retried.get(key, 0) + 1
+            for (api_id, model), entries in groups.items():
+                attempts = [entry[1] for entry in entries]
+                row = dict(
+                    event,
+                    model=model,
+                    requested_model=event["model"],
+                    actual_model_known=model != "automatic",
+                    actual_api_id=api_id,
+                    api_label=entries[0][2], router_origin=entries[0][3],
+                    request_details=attempts,
+                    retryAttempts=retried.get((api_id, model), 0),
+                )
                 row.update({f: sum(r.get(f, 0) for r in attempts) for f in token_fields})
                 row["quota_free_tokens"] = sum(r.get("quota_free_tokens", 0) for r in attempts)
                 row["usage_known"] = all(r.get("usage_known", False) for r in attempts)
+                if event.get("measurement_source") == "livingmemory_journal":
+                    row["usage_known"] = row["usage_known"] and event["usage_known"]
                 row["unknown_requests"] = sum(not r.get("usage_known", False) for r in attempts)
                 row["attempts"] = len(attempts)
+                if "cost_units" in event:
+                    row["cost_units"] = [event["cost_units"][entry[0]] for entry in entries]
+                    self._apply_cost_units(row)
                 output.append(row)
         return output
 
     def _configured_usage_models(self):
-        """报表可选已启用的直连/向量模型；automatic 使用已核验的健康列表。"""
-        models = {p["model"] for p in self.available_models().get("models", [])}
+        """报表与计费窗口使用相同候选，避免向量等类型只能查询不能配置。"""
+        return {p["model"] for p in self.available_models().get("models", [])}
+
+    def _by_model_summary(self, model_events, with_router=True):
+        """实际模型汇总：automatic 展开具体 API，原生 Provider 保持一级。
+
+        byModel 仍保留扁平实际模型给图表；这里仅生成汇总表层级。
+        已按模型筛选时沿用扁平口径，不再套一层父行。
+        """
+        def grouped(rows, key):
+            tagged = [dict(event, _model_bucket=key) for event in rows]
+            result = self._group(tagged, "_model_bucket")[0]
+            # 同一调用可能跨多个 API 尝试，“涉及调用”按 call_id 去重。
+            counted = [
+                event for event in rows
+                if not event.get("record_type") and not event.get("observedOnly")
+            ]
+            result["calls"] = len({event["call_id"] for event in counted})
+            result["observedCalls"] = len({
+                event["call_id"] for event in rows if event.get("observedOnly")
+            })
+            result["failedCalls"] = len({
+                event["call_id"] for event in counted
+                if event.get("status") != "completed"
+            })
+            return result
+
+        router_rows = [e for e in model_events if e.get("router_origin")]
+        output = []
+        if router_rows:
+            api_groups = {}
+            for event in router_rows:
+                api_id = event.get("actual_api_id") or "automatic:unknown"
+                api_groups.setdefault(api_id, []).append(event)
+            branches = []
+            for api_id, rows in api_groups.items():
+                models = sorted({row.get("model") or "automatic" for row in rows})
+                branch = grouped(rows, f"automatic::{api_id}")
+                branch.update({
+                    "key": rows[0]["api_label"],
+                    "providerId": api_id,
+                    "models": models,
+                    "apiChild": True,
+                })
+                branches.append(branch)
+            branches.sort(
+                key=lambda item: (item["totalTokens"], item["calls"]),
+                reverse=True,
+            )
+            total = grouped(router_rows, "automatic")
+            total.update({
+                "key": "automatic",
+                "aggregate": True,
+                "branchCount": len(branches),
+                "children": branches,
+            })
+            output.append(total)
+
+        native_groups = {}
+        for event in model_events:
+            if event.get("router_origin"):
+                continue
+            api_id = event.get("actual_api_id") or event.get("provider_id") or "unknown"
+            model = event.get("model") or "unknown"
+            native_groups.setdefault((api_id, model), []).append(event)
+        native = []
+        for (api_id, model), rows in native_groups.items():
+            item = grouped(rows, f"native::{api_id}::{model}")
+            item.update({
+                "key": rows[0].get("api_label") or model,
+                "providerId": api_id,
+                "native": True,
+            })
+            native.append(item)
+        native.sort(
+            key=lambda item: (item["totalTokens"], item["calls"]),
+            reverse=True,
+        )
+        output.extend(native)
+        return output
+
+    def _models_by_period(self, events, field):
+        """完整实际模型汇总供堆叠图使用；不依赖限量/分页的调用明细。"""
+        periods = {}
+        for event in events:
+            if field == "hour" and event.get("record_type"):
+                continue
+            periods.setdefault(event[field], []).append(event)
+        return [{"key": key, "models": self._group(rows, "model")}
+                for key, rows in sorted(periods.items())]
+
+    def _api_groups(self, events):
+        rows = [dict(e, _api_key=("automatic::" if e["router_origin"] else "native::") +
+                     e["actual_api_id"] + "::" + e["model"]) for e in events]
+        labels = {e["_api_key"]: e["api_label"] for e in rows}
+        return [dict(g, label=labels[g["key"]]) for g in self._group(rows, "_api_key")]
+
+    def _official_comparison(self, now, ledger, catalog):
+        reference = self._public_json(self.official_reference_path)
+        if reference.get("provider") != "DeepSeek官方":
+            return {"available": False}
         try:
-            config = json.loads(self.astrbot_config.read_text(encoding="utf-8-sig"))
-            for provider in config.get("provider", []):
-                if provider.get("enable", True) is False:
-                    continue
-                model = provider.get("embedding_model") or provider.get("model")
-                if model and model != "automatic" and (
-                    provider.get("embedding_model") or provider.get("type") is None
-                    or provider.get("type") == "openai"
-                ):
-                    models.add(str(model))
-        except (OSError, ValueError, TypeError):
-            pass
-        return models
+            start = datetime.strptime(reference["date"], "%Y-%m-%d").replace(
+                tzinfo=self.REPORT_TIMEZONE).timestamp()
+            # 校验独立参考；不读取成用量流水，不修改任何价格。
+            amount = Decimal(str(reference["amount"]))
+            requests = int(reference["requests"])
+            tokens = int(reference["tokens"])
+            if not amount.is_finite() or amount < 0 or min(requests, tokens) < 0:
+                raise ValueError()
+        except (KeyError, ValueError, TypeError, InvalidOperation):
+            return {"available": False, "error": "官网参考格式无效"}
+        official_ids = {i["id"] for i in catalog["items"] if i.get("host") == "api.deepseek.com"}
+        end = min(now, start + 86400)
+        local = [e for e in ledger if start <= e["started_at"] <= end and e["provider_id"] in official_ids and
+                 not e.get("record_type") and not self._is_observed_only(e)]
+        estimate = sum((Decimal(e["knownAmounts"].get("CNY", "0")) for e in local), Decimal(0))
+        local_requests = sum(len(e["request_details"]) or 1 for e in local)
+        local_tokens = sum(e["total_tokens"] for e in local)
+        return {"available": True, "provider": "DeepSeek官方", "date": reference["date"],
+                "currency": "CNY", "source": "user_reported", "officialCutoff": reference.get("official_cutoff"),
+                "alignment": "待核对（时间未对齐）", "official": {
+                    "amount": format(amount, "f"), "requests": requests, "tokens": tokens},
+                "local": {"amount": format(estimate, ".8f"), "requests": local_requests,
+                          "tokens": local_tokens, "cutoff": end,
+                          "pendingRequestCount": sum(e["pendingRequestCount"] for e in local)},
+                "snapshotDifference": {"amount": format(amount - estimate, ".8f"),
+                                      "requests": requests - local_requests,
+                                      "tokens": tokens - local_tokens},
+                "note": "官网截止时间及账户明细待确认；快照差值不代表已证明的漏采，不计入报表。"}
+
+    def _collector_health(self, now):
+        try:
+            with closing(self._read_only(self.telemetry_db)) as db:
+                row = db.execute("SELECT value FROM metadata WHERE key='collector_health'").fetchone()
+            result = json.loads(row["value"]) if row else {"available": False}
+            if row:
+                result["available"] = True
+                result["stale"] = now - result.get("updatedAt", 0) > 60
+            return result
+        except (OSError, ValueError, sqlite3.Error):
+            return {"available": False}
 
     def report(self, query):
         range_name = str(query.get("range", "24h"))
@@ -1484,7 +2223,7 @@ class UsageReportService:
             cutoff = now - self.RANGE_SECONDS[range_name]
         filters = {
             field: str(query.get(field) or "").strip()
-            for field in ("plugin_id", "model", "status")
+            for field in ("plugin_id", "model", "status", "api_id")
         }
         maximum_limit = 100000 if query.get("_export") else 1000
         limit = min(maximum_limit, max(1, int(query.get("limit", 100))))
@@ -1497,20 +2236,43 @@ class UsageReportService:
         ledger_cutoff = min([cutoff] + [
             self._price_timestamp({"effectiveFrom": q["startsAt"]}) for q in quotas
         ])
+        reference = self._public_json(self.official_reference_path)
+        try:
+            ref_start = datetime.strptime(reference["date"], "%Y-%m-%d").replace(
+                tzinfo=self.REPORT_TIMEZONE).timestamp()
+            ledger_cutoff = min(ledger_cutoff, ref_start)
+        except (KeyError, ValueError, TypeError):
+            pass
         events = self._telemetry_events(ledger_cutoff, now, {})
         events.extend(self._historical_events(ledger_cutoff, boundary, {}))
         events = [e for e in events if e["started_at"] <= now]
         quota_states = self._allocate_quotas(events, quotas, now)
+        catalog = self.api_catalog()
+        for event in events:
+            self._price_call(event, prices, catalog)
+        official_comparison = self._official_comparison(now, events, catalog)
         events = [e for e in events if e["started_at"] >= cutoff]
-        model_events = self._model_events(events)
+        model_events = self._model_events(events, catalog)
         all_options = {
             "plugins": sorted({e["plugin_id"] for e in events if e["started_at"] >= cutoff}),
-            "models": sorted({e["model"] for e in model_events} | self._configured_usage_models()),
+            "models": sorted(model for model in (
+                {e["model"] for e in model_events} | self._configured_usage_models() |
+                {i["model"] for i in catalog["items"]}
+            ) if model),
+            "apis": [{"id": "automatic", "name": "automatic（全部路由 API）"}] +
+                    [{"id": k, "name": v} for k, v in sorted(
+                        ({i["id"]: i["name"] for i in catalog["items"]} |
+                         {e["actual_api_id"]: e["api_label"] for e in model_events}).items())],
             "statuses": sorted({e["status"] for e in events if e["started_at"] >= cutoff}),
+        }
+        plugin_labels = {
+            plugin_id: self._plugin_label(plugin_id)
+            for plugin_id in all_options["plugins"]
         }
         # 筛选实际模型时只使用该模型的请求，跨模型重试不会把其他模型的 Token 带进来。
         for event in events + model_events:
             event["call_kind"] = event.get("call_kind") or "llm"
+            event["observedOnly"] = self._is_observed_only(event)
             event["day"] = datetime.fromtimestamp(
                 event["started_at"],
                 self.REPORT_TIMEZONE,
@@ -1524,36 +2286,16 @@ class UsageReportService:
                 + event["token_input_cached"]
                 + event["token_output"]
             )
-            amount, currency, price_status, price_id, price_band = self._event_cost(
-                event,
-                prices,
-            )
-            event["amount"] = amount
-            event["amount_currency"] = currency
-            event["amount_cny"] = amount if currency == "CNY" else None
-            event["price_status"] = price_status
-            event["price_id"] = price_id
-            event["price_band"] = price_band
-            event["free_tokens"] = (
-                event["total_tokens"] if price_status == "free"
-                else event.get("quota_free_tokens", 0)
-            )
-            event["billable_tokens"] = event["total_tokens"] - event["free_tokens"]
         account_events = [e for e in events if e["provider_id"].startswith("deepseek/")]
-        events = [e for e in (model_events if filters["model"] else events)
+        events = [e for e in (model_events if filters["model"] or filters["api_id"] else events)
                   if self._matches(e, filters)]
         model_events = [e for e in model_events if self._matches(e, filters)]
         events.sort(key=lambda item: item["started_at"], reverse=True)
         total_tokens = sum(item["total_tokens"] for item in events)
         known_amounts = {}
         for item in events:
-            if item["amount"] is None:
-                continue
-            currency = item["amount_currency"]
-            known_amounts[currency] = (
-                known_amounts.get(currency, Decimal("0"))
-                + Decimal(item["amount"])
-            )
+            for currency, amount in item["knownAmounts"].items():
+                known_amounts[currency] = known_amounts.get(currency, Decimal("0")) + Decimal(amount)
         known_amounts = {
             currency: format(
                 amount.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP),
@@ -1561,12 +2303,18 @@ class UsageReportService:
             )
             for currency, amount in sorted(known_amounts.items())
         }
-        latencies = [item["latency_ms"] for item in events]
-        ttfts = [item["ttft_ms"] for item in events if item["ttft_ms"] is not None]
-        unpriced = [item for item in events if item["amount"] is None]
-        free_events = [item for item in events if item["price_status"] == "free"]
+        aggregate_events = [item for item in events if item.get("record_type")]
+        # counted_events 是「真正的调用」，仅观测行不算；Token 与金额仍按全量 events 汇总。
+        counted_events = [item for item in events if not item.get("observedOnly")]
+        call_events = [item for item in counted_events if not item.get("record_type")]
+        observed_events = [item for item in events if item.get("observedOnly")]
+        latencies = [item["latency_ms"] for item in counted_events
+                     if item["latency_ms"] is not None]
+        ttfts = [item["ttft_ms"] for item in counted_events if item["ttft_ms"] is not None]
+        unpriced = [item for item in events if item["pendingRequestCount"]]
+        free_events = [item for item in counted_events if item["price_status"] == "free"]
         free_tokens = sum(item["free_tokens"] for item in events)
-        unpriced_tokens = sum(item["billable_tokens"] for item in unpriced)
+        unpriced_tokens = sum(item["unpriced_tokens"] for item in events)
         browsable_total = (
             len(events)
             if query.get("_export")
@@ -1585,12 +2333,14 @@ class UsageReportService:
             balance_summary["accountEstimateCny"] = format(sum(
                 (Decimal(e["amount"]) for e in account_events if e["amount"] is not None),
                 Decimal("0")), "f")
+        # 账户小时费用和余额归属也只使用逐笔记录，汇总补录保留在日总额中。
+        account_call_events = [e for e in account_events if not e.get("record_type")]
         attributed, orphaned = self._attribute_balance_to_hours(
-            account_events, balance_samples
+            account_call_events, balance_samples
         )
-        account_by_hour = {g["key"]: g for g in self._group(account_events, "hour")}
+        account_by_hour = {g["key"]: g for g in self._group(account_call_events, "hour")}
         usage_by_hour = {
-            item["key"]: item for item in self._group(events, "hour")
+            item["key"]: item for item in self._group(call_events, "hour")
         }
         if not balance_hours:
             # 余额采样覆盖不到（如昨日早于首个采样点）时，仍按事件给出小时分布，
@@ -1659,7 +2409,7 @@ class UsageReportService:
                 ),
                 "f",
             )
-        return {
+        payload = {
             "ok": True,
             "range": range_name,
             "from": cutoff,
@@ -1675,9 +2425,11 @@ class UsageReportService:
                     e["model"] == "automatic" and not e["request_details"] for e in events),
             },
             "summary": {
-                "calls": len(events),
+                "calls": len({e["call_id"] for e in call_events}),
+                # 运行时观测到的向量调用：证明调用发生，但 Token 由网关流水另记，不计入 calls。
+                "observedCalls": len(observed_events),
                 "failedCalls": sum(
-                    item["status"] != "completed" for item in events
+                    item["status"] != "completed" for item in counted_events
                 ),
                 "inputOther": sum(item["token_input_other"] for item in events),
                 "inputCached": sum(item["token_input_cached"] for item in events),
@@ -1685,15 +2437,21 @@ class UsageReportService:
                 "totalTokens": total_tokens,
                 "knownAmounts": known_amounts,
                 "knownAmountCny": known_amounts.get("CNY", "0.000000"),
-                "pricedCalls": len(events) - len(unpriced),
+                "pricedCalls": sum(e["amount"] is not None for e in call_events),
                 "unpricedCalls": len(unpriced),
-                "missingPriceCalls": sum(item["price_status"] == "pending" for item in events),
+                "missingPriceCalls": sum(
+                    item["missingPriceRequestCount"] > 0 for item in counted_events),
+                "pendingRequestCount": sum(e["pendingRequestCount"] for e in events),
+                "unknownUsageRequestCount": sum(e["unknownUsageRequestCount"] for e in events),
+                "amountStatus": "partial" if known_amounts and unpriced else "pending" if not known_amounts else
+                                "free" if all(e["price_status"] == "free" for e in events) else "complete",
                 "unpricedTokens": unpriced_tokens,
-                "freeCalls": len(free_events),
+                # 官方免费账单也是汇总记录，只增加 Token，不虚增调用次数。
+                "freeCalls": sum(not e.get("record_type") for e in free_events),
                 "freeTokens": free_tokens,
-                "billedCalls": len(events) - len(unpriced) - len(free_events),
+                "billedCalls": sum(e["amount"] is not None and e["price_status"] != "free" for e in call_events),
                 "billedTokens": total_tokens - free_tokens - unpriced_tokens,
-                "unknownUsageCalls": sum(not item["usage_known"] for item in events),
+                "unknownUsageCalls": sum(not item["usage_known"] for item in counted_events),
                 "unknownUsageRequests": sum(item["unknown_requests"] for item in events),
                 "requestAttempts": sum(len(item["request_details"]) for item in events),
                 "latencyP50Ms": self._percentile(latencies, 0.50),
@@ -1710,10 +2468,28 @@ class UsageReportService:
                 key=lambda item: item["key"],
                 reverse=True,
             ),
-            "byPlugin": self._group(events, "plugin_id"),
+            "byPlugin": self._group(events, "plugin_id", with_breakdown=True),
+            # 图表继续使用扁平实际模型；旧 automatic 未知量只在层级表父行中展示。
             "byModel": self._group(model_events, "model"),
+            "byApi": self._api_groups(model_events),
+            "byDayApi": [{"key": k, "models": self._api_groups([e for e in model_events if e["day"] == k])}
+                         for k in sorted({e["day"] for e in model_events})],
+            "byHourApi": [{"key": k, "models": self._api_groups([e for e in model_events if e["hour"] == k and not e.get("record_type")])}
+                          for k in sorted({e["hour"] for e in model_events if not e.get("record_type")})],
+            "modelHierarchy": self._by_model_summary(
+                model_events,
+                with_router=not filters["model"],
+            ),
             "byKind": self._group(events, "call_kind"),
+            "byDayModel": self._models_by_period(model_events, "day"),
+            "byHourModel": self._models_by_period(model_events, "hour"),
             "options": all_options,
+            "pluginLabels": plugin_labels,
+            "apiCatalog": catalog,
+            "officialReconciliation": official_comparison,
+            "collectorHealth": self._collector_health(now),
+            "modelLabels": {m: " / ".join(dict.fromkeys(i["name"] for i in catalog["items"]
+                                if i["model"] == m)) or m for m in all_options["models"]},
             "pagination": {
                 "total": browsable_total,
                 "availableTotal": len(events),
@@ -1723,6 +2499,20 @@ class UsageReportService:
             },
             "details": events[offset : min(offset + limit, browsable_total)],
         }
+        if aggregate_events:
+            payload["summary"]["aggregateRecords"] = len(aggregate_events)
+            payload["reconciliation"] = {
+                "records": len(aggregate_events),
+                "totalTokens": sum(e["total_tokens"] for e in aggregate_events),
+                "amountCny": format(sum((Decimal(e["amount"]) for e in aggregate_events
+                                        if e["amount_currency"] == "CNY"), Decimal("0")), "f"),
+                "excludedFromHourly": True,
+                "note": "日总含网关汇总及官方差额补录；无逐笔时间的记录不计入小时图、调用次数和延迟。",
+            }
+        monitoring = self._usage_monitoring(now)
+        if monitoring is not None:
+            payload["usageMonitoring"] = monitoring
+        return payload
 
     def export_csv(self, query):
         query = dict(query)
@@ -1758,7 +2548,19 @@ class UsageReportService:
             "free_tokens",
             "billable_tokens",
             "historical",
+            "observed_only",
             "call_id",
+            "record_type",
+            "note",
+            "period_start",
+            "period_end",
+            "fixed_amount_cny",
+            "api_label",
+            "router_origin",
+            "actual_api_id",
+            "amountStatus",
+            "pendingRequestCount",
+            "knownAmounts",
         ]
         output = io.StringIO()
         output.write("\ufeff")
@@ -1766,6 +2568,8 @@ class UsageReportService:
         writer.writeheader()
         for event in report["details"]:
             event = dict(event)
+            # 仅观测行保留在导出里（原始流水不裁剪），但用一列说明它不计入调用数。
+            event["observed_only"] = bool(event.get("observedOnly"))
             event["request_details"] = json.dumps(
                 event["request_details"], ensure_ascii=False, separators=(",", ":")
             )
@@ -1809,11 +2613,13 @@ class BalanceService:
             raise ProviderConfigError("provider credentials must be an object")
         if payload.get("version") == 2:
             deepseek = payload.get("deepseek") or {}
+            siliconflow = payload.get("siliconflow") or {}
             volcengine = payload.get("volcengine") or {}
             bailian = payload.get("bailian") or {}
             custom = payload.get("custom") or []
         else:
             deepseek = {"apiKey": payload.get("deepseekApiKey", "")}
+            siliconflow = {"apiKey": payload.get("siliconflowApiKey", "")}
             volcengine = {
                 "accessKeyId": payload.get("volcAccessKeyId", ""),
                 "secretAccessKey": payload.get("volcSecretAccessKey", ""),
@@ -1826,6 +2632,7 @@ class BalanceService:
         return {
             "version": 2,
             "deepseek": deepseek if isinstance(deepseek, dict) else {},
+            "siliconflow": siliconflow if isinstance(siliconflow, dict) else {},
             "volcengine": volcengine if isinstance(volcengine, dict) else {},
             "bailian": bailian if isinstance(bailian, dict) else {},
             "custom": custom if isinstance(custom, list) else [],
@@ -1879,6 +2686,7 @@ class BalanceService:
         with self.lock:
             config, _ = self._credentials()
             deepseek = config["deepseek"]
+            siliconflow = config["siliconflow"]
             volcengine = config["volcengine"]
             bailian = config["bailian"]
             return {
@@ -1886,6 +2694,10 @@ class BalanceService:
                 "deepseek": {
                     "configured": bool(deepseek.get("apiKey")),
                     **({"apiKey": str(deepseek.get("apiKey") or "")} if reveal else {}),
+                },
+                "siliconflow": {
+                    "configured": bool(siliconflow.get("apiKey")),
+                    **({"apiKey": str(siliconflow.get("apiKey") or "")} if reveal else {}),
                 },
                 "volcengine": {
                     "configured": bool(
@@ -1944,10 +2756,11 @@ class BalanceService:
     def update_config(self, update):
         if not isinstance(update, dict):
             raise ProviderConfigError("configuration payload must be an object")
-        unknown = set(update) - {"deepseek", "volcengine", "bailian", "custom"}
+        unknown = set(update) - {"deepseek", "siliconflow", "volcengine", "bailian", "custom"}
         if unknown:
             raise ProviderConfigError("configuration payload contains unsupported fields")
         deepseek_update = update.get("deepseek") or {}
+        siliconflow_update = update.get("siliconflow") or {}
         volcengine_update = update.get("volcengine") or {}
         bailian_update = update.get("bailian") or {}
         custom_update = update.get("custom") or []
@@ -1955,6 +2768,10 @@ class BalanceService:
             raise ProviderConfigError("built-in provider configuration must be an object")
         if not isinstance(bailian_update, dict):
             raise ProviderConfigError("bailian configuration must be an object")
+        if not isinstance(siliconflow_update, dict):
+            raise ProviderConfigError("SiliconFlow configuration must be an object")
+        if set(siliconflow_update) - {"apiKey", "clearApiKey"}:
+            raise ProviderConfigError("SiliconFlow configuration contains unsupported fields")
         if set(deepseek_update) - {"apiKey", "clearApiKey"}:
             raise ProviderConfigError("DeepSeek configuration contains unsupported fields")
         if set(bailian_update) - {
@@ -1973,6 +2790,7 @@ class BalanceService:
             raise ProviderConfigError("Volcengine configuration contains unsupported fields")
         for section, fields in (
             (deepseek_update, ("clearApiKey",)),
+            (siliconflow_update, ("clearApiKey",)),
             (
                 volcengine_update,
                 ("clearAccessKeyId", "clearSecretAccessKey"),
@@ -2006,6 +2824,14 @@ class BalanceService:
                         deepseek_update,
                         "apiKey",
                         current["deepseek"].get("apiKey"),
+                        "clearApiKey",
+                    )
+                },
+                "siliconflow": {
+                    "apiKey": self._secret(
+                        siliconflow_update,
+                        "apiKey",
+                        current["siliconflow"].get("apiKey"),
                         "clearApiKey",
                     )
                 },
@@ -2220,6 +3046,57 @@ class BalanceService:
                 if provider.get("detailPath")
                 else ""
             ),
+        }
+
+    def _siliconflow(self, api_key):
+        if not api_key:
+            return {"configured": False, "status": "unconfigured"}
+        request = urllib.request.Request(
+            "https://api.siliconflow.cn/v1/user/info",
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": "BotManager/1.0",
+            },
+        )
+        try:
+            payload = self._request_json(request)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 410:
+                raise
+            # 国内官方接口已停用时明确说明，不把无法查询误报为零余额。
+            return {
+                "configured": True,
+                "status": "unsupported",
+                "reason": "endpoint_deprecated",
+            }
+        if not isinstance(payload, dict) or payload.get("status") is not True:
+            raise RuntimeError("SiliconFlow account query failed")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise ValueError("SiliconFlow balance is missing")
+        balances = {}
+        # totalBalance 为账户总余额；balance 仅赠送余额，不能当作全部可用金额。
+        for field in ("totalBalance", "chargeBalance", "balance"):
+            value = data.get(field)
+            if isinstance(value, bool) or value is None:
+                raise ValueError("SiliconFlow balance is missing")
+            try:
+                amount = Decimal(str(value))
+            except InvalidOperation as exc:
+                raise ValueError("SiliconFlow balance is invalid") from exc
+            if not amount.is_finite():
+                raise ValueError("SiliconFlow balance is invalid")
+            balances[field] = format(amount, "f")
+        # 只返回金额，不把账户邮箱、头像、用户资料或密钥发送给概览页面。
+        return {
+            "configured": True,
+            "status": "ok",
+            "currency": "CNY",
+            "available": Decimal(balances["totalBalance"]) > 0,
+            "availableBalance": balances["totalBalance"],
+            "cashBalance": balances["chargeBalance"],
+            "grantedBalance": balances["balance"],
         }
 
     def _deepseek(self, api_key):
@@ -2449,7 +3326,7 @@ class BalanceService:
                 if isinstance(item, dict) and item.get("enabled") is not False
             ]
             with ThreadPoolExecutor(
-                max_workers=max(2, min(6, 2 + len(custom_providers)))
+                max_workers=max(4, min(6, 4 + len(custom_providers)))
             ) as executor:
                 deepseek = executor.submit(
                     self._safe_query,
@@ -2482,6 +3359,12 @@ class BalanceService:
                     "timestamp": now,
                     "cacheSeconds": self.cache_seconds,
                     "deepseek": deepseek.result(),
+                    # 用户改用官方账单直达入口，不再请求已停用的余额接口。
+                    "siliconflow": {
+                        "configured": True,
+                        "status": "external_link",
+                        "url": "https://cloud.siliconflow.cn/me/bills",
+                    },
                     "volcengine": volcengine.result(),
                     "bailian": bailian.result(),
                     "custom": [

@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" width="1280" height="320" role="img" aria-label="Bot Manager：AstrBot 用量、余额与运维控制台">
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fbf8f2"/>
+      <stop offset="55%" stop-color="#f4efe4"/>
+      <stop offset="100%" stop-color="#e8efe6"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3f6b53"/>
+      <stop offset="100%" stop-color="#7ba07f"/>
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M0 0H32M0 0V32" fill="none" stroke="#d8d2c4" stroke-width="1" opacity="0.55"/>
+    </pattern>
+  </defs>
+
+  <rect width="1280" height="320" fill="url(#paper)"/>
+  <rect width="1280" height="320" fill="url(#grid)" opacity="0.45"/>
+
+  <!-- 左侧字标 -->
+  <rect x="72" y="96" width="112" height="112" rx="18" fill="url(#mark)"/>
+  <text x="128" y="170" font-family="Georgia, 'Times New Roman', serif" font-size="52"
+        font-weight="700" fill="#fbf8f2" text-anchor="middle" letter-spacing="2">BM</text>
+
+  <!-- 主标题 -->
+  <text x="216" y="150" font-family="'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif"
+        font-size="58" font-weight="700" fill="#26302b" letter-spacing="1">Bot Manager</text>
+  <text x="218" y="196" font-family="'PingFang SC', 'Microsoft YaHei', Arial, sans-serif"
+        font-size="24" fill="#5d6a61" letter-spacing="2">用量 · 余额 · 运维控制台</text>
+
+  <!-- 右侧装饰：三条轨道 -->
+  <g opacity="0.55" fill="none" stroke="#7ba07f" stroke-width="2">
+    <ellipse cx="1050" cy="160" rx="150" ry="58"/>
+    <ellipse cx="1050" cy="160" rx="110" ry="88" transform="rotate(24 1050 160)"/>
+    <circle cx="1050" cy="160" r="26" fill="#3f6b53" stroke="none" opacity="0.75"/>
+  </g>
+  <circle cx="1050" cy="102" r="7" fill="#c2703f"/>
+
+  <!-- 底部注脚 -->
+  <line x1="72" y1="248" x2="1208" y2="248" stroke="#cdc6b6" stroke-width="1"/>
+  <text x="72" y="282" font-family="'PingFang SC', 'Microsoft YaHei', Arial, sans-serif"
+        font-size="18" fill="#6d7a70" letter-spacing="1">AstrBot 插件 · 本机管理面板 · SSH 隧道客户端</text>
+  <text x="1208" y="282" font-family="'Helvetica Neue', Arial, sans-serif" font-size="18"
+        fill="#8a9490" text-anchor="end" letter-spacing="1">v2.2.0</text>
+</svg>

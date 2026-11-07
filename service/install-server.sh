@@ -26,18 +26,32 @@ PROVIDER_FILE="$CREDENTIAL_DIR/provider-credentials.json"
 PLUGIN_TOKEN_FILE="$CREDENTIAL_DIR/plugin-token"
 ASTRBOT_PLUGIN_ROOT="/var/lib/astrbot/data/plugins"
 TELEMETRY_PLUGIN="astrbot_plugin_usage_telemetry"
-# 独立仓库将插件放在根目录、服务放在 service/；同时兼容原有部署包结构。
-if [ -f "$SOURCE_DIR/../main.py" ] && [ -f "$SOURCE_DIR/../runtime_paths.py" ] && [ -f "$SOURCE_DIR/../metadata.yaml" ]; then
-  TELEMETRY_SOURCE="$SOURCE_DIR/.."
-else
-  TELEMETRY_SOURCE="$SOURCE_DIR/$TELEMETRY_PLUGIN"
-fi
 TELEMETRY_TARGET="$ASTRBOT_PLUGIN_ROOT/$TELEMETRY_PLUGIN"
 TELEMETRY_BACKUP_ROOT="/var/lib/astrbot/data/plugin-backups"
-LEGACY_SEARCH_TARGET="$ASTRBOT_PLUGIN_ROOT/astrbot_plugin_search_meter"
-# 公共发行版通过此模块读取 AstrBot 数据目录，部署时必须一起复制。
-PLUGIN_FILES="main.py metadata.yaml search_meter.py command_query.py usage_query.py runtime_paths.py"
 USAGE_DB="/var/lib/astrbot/data/plugin_usage.db"
+
+# 仓库布局：插件在仓库根目录，服务在 service/。安装器需要 service/astrbot_plugin_usage_telemetry/，
+# 这里从仓库根目录临时同步一份，避免手工复制导致插件与服务版本漂移。
+PLUGIN_SOURCE_DIR="$SOURCE_DIR"
+STAGED_PLUGIN_DIR=""
+REPO_ROOT="$(dirname -- "$SOURCE_DIR")"
+if [ ! -d "$SOURCE_DIR/$TELEMETRY_PLUGIN" ] && [ -f "$REPO_ROOT/metadata.yaml" ]; then
+  STAGED_PLUGIN_DIR="$(mktemp -d)"
+  trap 'rm -rf "$STAGED_PLUGIN_DIR"' EXIT INT TERM
+  mkdir -p "$STAGED_PLUGIN_DIR/$TELEMETRY_PLUGIN"
+  for file in main.py command_query.py usage_query.py search_meter.py runtime_paths.py \
+              metadata.yaml _conf_schema.json; do
+    if [ -f "$REPO_ROOT/$file" ]; then
+      cp "$REPO_ROOT/$file" "$STAGED_PLUGIN_DIR/$TELEMETRY_PLUGIN/$file"
+    fi
+  done
+  if [ -d "$REPO_ROOT/assets" ]; then
+    cp -R "$REPO_ROOT/assets" "$STAGED_PLUGIN_DIR/$TELEMETRY_PLUGIN/assets"
+  fi
+  PLUGIN_SOURCE_DIR="$STAGED_PLUGIN_DIR"
+  echo "Staged plugin from repository root: $REPO_ROOT"
+fi
+TELEMETRY_SOURCE="$PLUGIN_SOURCE_DIR/$TELEMETRY_PLUGIN"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run this installer as root." >&2
@@ -51,18 +65,32 @@ for command in python3 systemctl ss; do
   fi
 done
 
-for file in server-panel.py server-agent.py server-monitor.py server-configure.py panel.html bot-manager.service; do
+for file in server-panel.py server-agent.py server-monitor.py server-app-metrics.py server-embedding-usage.py server-configure.py panel.html bot-manager.service; do
   if [ ! -f "$SOURCE_DIR/$file" ]; then
     echo "Missing deployment file: $SOURCE_DIR/$file" >&2
     exit 1
   fi
 done
-for file in $PLUGIN_FILES; do
+
+for file in main.py metadata.yaml _conf_schema.json; do
   if [ ! -f "$TELEMETRY_SOURCE/$file" ]; then
-    echo "Missing deployment file: $TELEMETRY_SOURCE/$file" >&2
+    echo "Missing plugin file: $TELEMETRY_SOURCE/$file" >&2
     exit 1
   fi
 done
+
+# 遥测插件是多文件包（main + command_query/usage_query/search_meter/runtime_paths），
+# 少一个就是运行时 ModuleNotFoundError，这里先卡住。
+telemetry_module_count=0
+for module in "$TELEMETRY_SOURCE"/*.py; do
+  if [ -f "$module" ]; then
+    telemetry_module_count=$((telemetry_module_count + 1))
+  fi
+done
+if [ "$telemetry_module_count" -lt 2 ]; then
+  echo "Telemetry plugin looks incomplete: $TELEMETRY_SOURCE" >&2
+  exit 1
+fi
 
 previous_target="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
 generated_password=""
@@ -152,33 +180,44 @@ install -d -m 0755 "$INSTALL_ROOT/releases" "$RELEASE_DIR"
 install -m 0755 "$SOURCE_DIR/server-panel.py" "$RELEASE_DIR/server-panel.py"
 install -m 0755 "$SOURCE_DIR/server-agent.py" "$RELEASE_DIR/server-agent.py"
 install -m 0644 "$SOURCE_DIR/server-monitor.py" "$RELEASE_DIR/server-monitor.py"
+# server-monitor.py 用 importlib 按文件名加载它；缺这个文件监控服务起不来。
+install -m 0644 "$SOURCE_DIR/server-app-metrics.py" "$RELEASE_DIR/server-app-metrics.py"
+install -m 0644 "$SOURCE_DIR/server-embedding-usage.py" "$RELEASE_DIR/server-embedding-usage.py"
 install -m 0755 "$SOURCE_DIR/server-configure.py" "$RELEASE_DIR/server-configure.py"
 install -m 0644 "$SOURCE_DIR/panel.html" "$RELEASE_DIR/panel.html"
 install -m 0644 "$SOURCE_DIR/bot-manager.service" "$RELEASE_DIR/bot-manager.service"
 install -d -m 0755 "$RELEASE_DIR/$TELEMETRY_PLUGIN"
-for file in $PLUGIN_FILES; do
-  install -m 0644 "$TELEMETRY_SOURCE/$file" "$RELEASE_DIR/$TELEMETRY_PLUGIN/$file"
-done
+# 整个插件目录一起搬。main.py 只是入口，command_query / usage_query /
+# search_meter / runtime_paths 少任何一个都会 ModuleNotFoundError，assets 是界面资源。
+cp -a "$TELEMETRY_SOURCE"/. "$RELEASE_DIR/$TELEMETRY_PLUGIN/"
+rm -rf "$RELEASE_DIR/$TELEMETRY_PLUGIN/__pycache__"
+chown -R root:root "$RELEASE_DIR/$TELEMETRY_PLUGIN"
+find "$RELEASE_DIR/$TELEMETRY_PLUGIN" -type d -exec chmod 0755 {} +
+find "$RELEASE_DIR/$TELEMETRY_PLUGIN" -type f -exec chmod 0644 {} +
 install -m 0644 "$RELEASE_DIR/bot-manager.service" "$UNIT_PATH"
 
 python3 -m py_compile \
   "$RELEASE_DIR/server-panel.py" \
   "$RELEASE_DIR/server-agent.py" \
   "$RELEASE_DIR/server-monitor.py" \
+  "$RELEASE_DIR/server-app-metrics.py" \
+  "$RELEASE_DIR/server-embedding-usage.py" \
   "$RELEASE_DIR/server-configure.py" \
-  "$RELEASE_DIR/$TELEMETRY_PLUGIN/"*.py
+  "$RELEASE_DIR/$TELEMETRY_PLUGIN"/*.py
 (
   cd "$RELEASE_DIR"
   sha256sum \
     server-panel.py \
     server-agent.py \
     server-monitor.py \
+    server-app-metrics.py \
+    server-embedding-usage.py \
     server-configure.py \
     panel.html \
     bot-manager.service \
-    "$TELEMETRY_PLUGIN/"*.py \
-    "$TELEMETRY_PLUGIN/metadata.yaml" \
     > SHA256SUMS
+  cd "$TELEMETRY_PLUGIN"
+  sha256sum *.py metadata.yaml assets/* 2>/dev/null | sed "s|^\([0-9a-f]*\)  |\1  $TELEMETRY_PLUGIN/|" >> "$RELEASE_DIR/SHA256SUMS"
 )
 systemctl daemon-reload
 systemctl enable bot-manager.service
@@ -255,43 +294,44 @@ then
   rollback
 fi
 
-telemetry_changed=0
-for file in $PLUGIN_FILES; do
-  if ! cmp -s "$RELEASE_DIR/$TELEMETRY_PLUGIN/$file" "$TELEMETRY_TARGET/$file"; then
-    telemetry_changed=1
+telemetry_changed=1
+if [ -f "$TELEMETRY_TARGET/main.py" ] && [ -f "$TELEMETRY_TARGET/metadata.yaml" ]; then
+  telemetry_changed=0
+  # 逐个比对 release 里的每个插件文件，缺一个也算变更，避免运行目录被截断。
+  for src in "$RELEASE_DIR/$TELEMETRY_PLUGIN"/*.py "$RELEASE_DIR/$TELEMETRY_PLUGIN/metadata.yaml"; do
+    base="$(basename "$src")"
+    if ! cmp -s "$src" "$TELEMETRY_TARGET/$base"; then
+      telemetry_changed=1
+      break
+    fi
+  done
+  if [ "$telemetry_changed" -eq 0 ] && [ -d "$RELEASE_DIR/$TELEMETRY_PLUGIN/assets" ]; then
+    if ! diff -rq "$RELEASE_DIR/$TELEMETRY_PLUGIN/assets" "$TELEMETRY_TARGET/assets" >/dev/null 2>&1; then
+      telemetry_changed=1
+    fi
   fi
-done
-if [ -d "$LEGACY_SEARCH_TARGET" ]; then
-  telemetry_changed=1
 fi
 
 if [ "$telemetry_changed" -eq 1 ]; then
   telemetry_stage="$ASTRBOT_PLUGIN_ROOT/.${TELEMETRY_PLUGIN}.new"
   telemetry_backup="$TELEMETRY_BACKUP_ROOT/${TELEMETRY_PLUGIN}-${RELEASE_ID}"
-  search_backup="$TELEMETRY_BACKUP_ROOT/astrbot_plugin_search_meter-${RELEASE_ID}"
   install -d -o astrbot -g astrbot -m 0755 "$ASTRBOT_PLUGIN_ROOT" "$TELEMETRY_BACKUP_ROOT"
   rm -rf "$telemetry_stage"
   install -d -o astrbot -g astrbot -m 0755 "$telemetry_stage"
-  for file in $PLUGIN_FILES; do
-    install -o astrbot -g astrbot -m 0644 "$RELEASE_DIR/$TELEMETRY_PLUGIN/$file" "$telemetry_stage/$file"
-  done
+  # 整目录替换：旧逻辑只搬 main.py + metadata.yaml，其余模块会被 mv 带走后消失。
+  cp -a "$RELEASE_DIR/$TELEMETRY_PLUGIN"/. "$telemetry_stage/"
+  rm -rf "$telemetry_stage/__pycache__"
+  chown -R astrbot:astrbot "$telemetry_stage"
   if [ -d "$TELEMETRY_TARGET" ]; then
     mv "$TELEMETRY_TARGET" "$telemetry_backup"
   fi
   mv "$telemetry_stage" "$TELEMETRY_TARGET"
-  # 旧搜索插件的补丁无法卸载，必须移出加载目录并重启，避免重复上报。
-  if [ -d "$LEGACY_SEARCH_TARGET" ]; then
-    mv "$LEGACY_SEARCH_TARGET" "$search_backup"
-  fi
 
   telemetry_rollback() {
     echo "AstrBot telemetry verification failed; restoring the previous plugin." >&2
     rm -rf "$TELEMETRY_TARGET"
     if [ -d "$telemetry_backup" ]; then
       mv "$telemetry_backup" "$TELEMETRY_TARGET"
-    fi
-    if [ -d "$search_backup" ]; then
-      mv "$search_backup" "$LEGACY_SEARCH_TARGET"
     fi
     systemctl restart astrbot.service || true
     exit 1

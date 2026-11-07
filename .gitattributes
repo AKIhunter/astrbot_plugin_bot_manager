@@ -1,4 +1,17 @@
 tests/ export-ignore
 docs/ export-ignore
 service/ export-ignore
+client/ export-ignore
+tools/ export-ignore
+.github/ export-ignore
+CHANGELOG.md export-ignore
 service/panel.html -text whitespace=cr-at-eol
+
+# 跨平台行尾：服务器脚本与 Python 必须 LF，Windows 脚本用 CRLF
+*.sh text eol=lf
+*.py text eol=lf
+*.service text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.ps1 text eol=crlf
+*.vbs text eol=crlf

@@ -1,0 +1,98 @@
+{
+  "deepseek_api_key": {
+    "description": "DeepSeek 余额查询密钥",
+    "type": "string",
+    "hint": "填 DeepSeek 平台（platform.deepseek.com）的 API Key，形如 sk-xxx。填了之后插件会自动同步到本机面板，由面板负责取余额与采样；留空则沿用面板「接口配置」里已保存的密钥。",
+    "default": ""
+  },
+  "panel_admin_username": {
+    "description": "管理面板登录账号",
+    "type": "string",
+    "hint": "本机 Web 面板（http://127.0.0.1:17321）的登录账号。配合下面的密码一起填才会生效。",
+    "default": ""
+  },
+  "panel_admin_password": {
+    "description": "管理面板登录密码",
+    "type": "string",
+    "hint": "至少 8 位。填写后插件会把账号密码同步到服务器面板，改完立即生效、无需重启面板。留空表示不改动现有密码。",
+    "default": ""
+  },
+  "credential_sync_enable": {
+    "description": "自动同步凭据",
+    "type": "bool",
+    "hint": "开启后，插件启动 30 秒后以及每次改动配置后，会把上面的密钥与账密下发给本机面板；只在配置发生变化时推送一次，不会覆盖你在面板里手工改的值。",
+    "default": true
+  },
+  "credential_sync_interval_minutes": {
+    "description": "凭据检查间隔（分钟）",
+    "type": "int",
+    "hint": "多久检查一次配置是否有变化，最小 5 分钟。只是比对指纹，没变化不会推送。",
+    "default": 30
+  },
+  "notice_enable": {
+    "description": "余额提醒",
+    "type": "bool",
+    "hint": "总开关。关闭后不再定时查询 DeepSeek 余额，也不会发送低余额或充值提醒；/bm 余额 仍可手动查询。",
+    "default": true
+  },
+  "low_balance_threshold": {
+    "description": "低余额阈值（元）",
+    "type": "float",
+    "hint": "余额低于该值时提醒一次；回到阈值以上后，下次跌破会重新提醒。默认 5 元。",
+    "default": 5.0
+  },
+  "check_interval_minutes": {
+    "description": "检查间隔（分钟）",
+    "type": "int",
+    "hint": "多久查一次余额，最小 1 分钟。查的是本机面板的余额接口，不直接消耗上游额度。",
+    "default": 5
+  },
+  "notify_target_qq": {
+    "description": "提醒的 QQ 号",
+    "type": "list",
+    "hint": "填接收提醒的 QQ 号，按私聊发送，可填多个。留空则回退到自动识别（见下面「未配置时自动回退」）。",
+    "default": []
+  },
+  "notify_target_groups": {
+    "description": "提醒的群号",
+    "type": "list",
+    "hint": "填接收提醒的群号，按群聊发送，可填多个。留空则不发群。",
+    "default": []
+  },
+  "notify_platform": {
+    "description": "平台标识",
+    "type": "string",
+    "hint": "一般留空，插件会自动从最近消息推断（例如 snowluma_onebot）。只有推断不准时才手填。",
+    "default": ""
+  },
+  "recharge_thanks_enable": {
+    "description": "充值后致谢",
+    "type": "bool",
+    "hint": "余额从低位回升且增幅达到 0.01 元时，按人设发一条感谢；同一轮充值只发一次。",
+    "default": true
+  },
+  "recharge_thanks_group": {
+    "description": "致谢也发群",
+    "type": "bool",
+    "hint": "关闭后致谢只发上面配置的 QQ 私聊，不打扰群。",
+    "default": true
+  },
+  "fallback_auto_channel": {
+    "description": "未配置时自动回退",
+    "type": "bool",
+    "hint": "上面 QQ 和群都留空时，沿用旧行为：记住管理员最近说话的会话去发。关掉则没配置就不发。",
+    "default": true
+  },
+  "low_balance_custom_text": {
+    "description": "自定义低余额文案",
+    "type": "text",
+    "hint": "留空则按人设动态生成。填写后原样发送，可用 {balance} 和 {threshold} 占位符。",
+    "default": ""
+  },
+  "recharge_thanks_custom_text": {
+    "description": "自定义致谢文案",
+    "type": "text",
+    "hint": "留空则按人设动态生成。填写后原样发送，可用 {balance} 占位符。",
+    "default": ""
+  }
+}
