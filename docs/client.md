@@ -18,11 +18,25 @@
 
 如果某个端口在本机已被占用，客户端会跳过它并在日志里写明，其余端口照常映射。
 
+两个平台各有一份实现，功能对齐、交互不同：
+
+| | Windows | macOS |
+| --- | --- | --- |
+| 文件 | `client/BotManagerClient.ps1`（+ 单文件 exe） | `client/macos/bot-manager.command` |
+| 界面 | PowerShell + WinForms | bash + `osascript` 原生对话框 |
+| 凭据存储 | DPAPI（按当前 Windows 账户加密） | 钥匙串（service `bot-manager-client`） |
+| 口令私钥 | `ssh-keygen` 解出临时副本，断开即删 | `SSH_ASKPASS` 临时喂口令，不产生副本 |
+| 详见 | 本文（下半部分默认讲 Windows） | [macOS 说明](../client/macos/README.md) |
+
+
 ## 一、获取
 
-- **单文件 exe**：见仓库 Release 附件 `BotManagerClient.exe`，双击即用，无需安装。
-- **源码**：`client/BotManagerClient.ps1`，用 `run-client.vbs` 或
+- **Windows 单文件 exe**：见仓库 Release 附件 `BotManagerClient.exe`，双击即用，无需安装。
+- **Windows 源码**：`client/BotManagerClient.ps1`，用 `run-client.vbs` 或
   `powershell -NoProfile -STA -ExecutionPolicy Bypass -File BotManagerClient.ps1` 启动。
+- **macOS**：Release 附件 `BotManagerClient-macos-*.zip`，解压后双击
+  `bot-manager.command`；首次运行需右键「打开」或在终端
+  `xattr -d com.apple.quarantine` 放行。详见 [macOS 说明](../client/macos/README.md)。
 
 依赖 Windows 10/11 自带的 OpenSSH（`ssh.exe`、`ssh-keygen.exe`）与 PowerShell 5.1，
 不需要额外运行时。

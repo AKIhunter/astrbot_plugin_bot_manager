@@ -31,3 +31,10 @@ credentials.json
 provider-credentials.json
 plugin-token
 tunnel-target
+
+# SSH 私钥（无扩展名，*.key / *.pem 挡不住）
+id_ed25519
+id_rsa
+id_ecdsa
+id_dsa
+*.pub

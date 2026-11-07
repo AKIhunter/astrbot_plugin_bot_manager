@@ -1,5 +1,26 @@
 # 更新日志
 
+## 2.2.5 — 2026-11-08（macOS 客户端，Windows 版与插件包不变）
+
+### 新增：macOS 客户端
+
+- `client/macos/bot-manager.command`：bash + `osascript` 原生对话框，不依赖 Python/Node/Homebrew。
+- 功能与 Windows 版对齐：四端口隧道（17321/6185/5099/6081）、遗留隧道接管、
+  测试连接、生成密钥、安装公钥、三个服务的密码重置、复制面板密码、日志查看。
+- 凭据存 **钥匙串**（service `bot-manager-client`）；带口令的私钥用 `SSH_ASKPASS`
+  临时喂口令，不产生解密副本（Windows 版是解出临时副本再删）。
+- 支持 `--selftest` / `--diagnose` / `--version`，可用 `BM_SSH_BIN` 指定 Homebrew 的 ssh。
+
+### 修正
+
+- `.gitignore` 增加 `id_ed25519` / `id_rsa` / `id_ecdsa` / `id_dsa` / `*.pub`：
+  无扩展名的私钥此前挡不住。
+
+### 说明
+
+macOS 版为首次发布，开发环境无 Mac，未做真机端到端验证；
+隧道参数、端口跳过、结果解析用桩程序覆盖过。真机遇到问题请附 `--diagnose` 输出。
+
 ## 2.2.4 — 2026-11-08（客户端与服务，插件包不变）
 
 ### 新增：客户端内置三个服务的密码重置
