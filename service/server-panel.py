@@ -30,6 +30,13 @@ MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 256
 CREDENTIAL_BACKUP_KEEP = 8
 SCRYPT_PARAMS = {"n": 2**14, "r": 8, "p": 1, "dklen": 32}
+# 面板登录防护：连续失败后指数退避锁定；校验结果短时缓存，避免每个请求都算一次 scrypt。
+AUTH_FAILURE_LIMIT = 5
+AUTH_LOCK_BASE_SECONDS = 60
+AUTH_LOCK_MAX_SECONDS = 900
+AUTH_CACHE_SECONDS = 60
+AUTH_CACHE_MAX = 32
+AUTH_MAX_PARALLEL = 12
 
 
 def running_as_root():
@@ -184,6 +191,91 @@ def write_panel_credentials(path, username, password):
     return {"username": username, "updatedAt": int(time.time())}
 
 
+class AuthGuard:
+    """面板登录的失败限速、临时锁定与短时缓存。
+
+    面板只绑回环，经 SSH 隧道进来的请求源全是 127.0.0.1，按 IP 封禁会误伤自己，
+    因此用「全局连续失败计数 + 指数退避」对抗在线猜测，并把一次性校验结果缓存 60 秒，
+    避免浏览器每个请求都付一次 scrypt 的 CPU 成本。
+    """
+
+    def __init__(
+        self,
+        verifier,
+        failure_limit=AUTH_FAILURE_LIMIT,
+        lock_base=AUTH_LOCK_BASE_SECONDS,
+        lock_max=AUTH_LOCK_MAX_SECONDS,
+        cache_seconds=AUTH_CACHE_SECONDS,
+        max_parallel=AUTH_MAX_PARALLEL,
+    ):
+        self.verifier = verifier
+        self.failure_limit = failure_limit
+        self.lock_base = lock_base
+        self.lock_max = lock_max
+        self.cache_seconds = cache_seconds
+        self._lock = threading.Lock()
+        self._failures = 0
+        self._locked_until = 0.0
+        self._cache = {}
+        self._slots = threading.BoundedSemaphore(max_parallel)
+
+    def invalidate(self):
+        with self._lock:
+            self._cache.clear()
+
+    def _cache_key(self, authorization):
+        # 把凭据文件的 mtime 算进 key：重置密码后旧口令的缓存立即失效
+        try:
+            stamp = self.verifier.path.stat().st_mtime_ns
+        except OSError:
+            stamp = 0
+        return hashlib.sha256(
+            f"{stamp}|{authorization}".encode("utf-8", "replace")
+        ).hexdigest()
+
+    def check(self, authorization):
+        """返回 (是否放行, 建议 Retry-After 秒, 原因)。"""
+        now = time.monotonic()
+        with self._lock:
+            if self._locked_until > now:
+                return False, int(self._locked_until - now) + 1, "locked"
+            if authorization:
+                expiry = self._cache.get(self._cache_key(authorization))
+                if expiry and expiry > now:
+                    return True, 0, "cached"
+
+        if not self._slots.acquire(blocking=False):
+            # 并发校验过多：直接拒绝，避免把 2 核打满（同时压住撞库速率）
+            return False, 5, "busy"
+        try:
+            ok = self.verifier.verify(authorization)
+        finally:
+            self._slots.release()
+
+        with self._lock:
+            if ok:
+                self._failures = 0
+                self._locked_until = 0.0
+                if len(self._cache) >= AUTH_CACHE_MAX:
+                    self._cache.clear()
+                self._cache[self._cache_key(authorization)] = (
+                    time.monotonic() + self.cache_seconds
+                )
+                return True, 0, "ok"
+            self._failures += 1
+            count = self._failures
+            if count >= self.failure_limit:
+                over = count - self.failure_limit
+                lock = min(self.lock_base * (2 ** min(over, 6)), self.lock_max)
+                self._locked_until = time.monotonic() + lock
+                sys.stderr.write(
+                    "panel auth: %d 次连续失败，锁定 %d 秒\n" % (count, lock)
+                )
+                return False, int(lock), "lockout"
+            sys.stderr.write("panel auth: 第 %d 次连续失败\n" % count)
+            return False, 0, "denied"
+
+
 class InternalTokenVerifier:
     def __init__(self, path):
         self.expected = Path(path).read_text(encoding="utf-8").strip().encode("utf-8")
@@ -226,9 +318,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_json(self, status, payload):
+    def send_json(self, status, payload, extra_headers=None):
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        self.send_body(status, body, "application/json; charset=utf-8")
+        self.send_body(status, body, "application/json; charset=utf-8", extra_headers)
 
     def request_authentication(self):
         body = b'{"ok":false,"error":"Authentication required."}'
@@ -251,7 +343,32 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     def authenticated(self):
-        return self.server.credentials.verify(self.headers.get("Authorization"))
+        """放行时返回 True；失败时已经把 401/429 写回客户端，调用方直接 return。"""
+        ok, retry_after, reason = self.server.auth.check(
+            self.headers.get("Authorization")
+        )
+        if ok:
+            return True
+        if reason in ("locked", "lockout"):
+            self.send_json(
+                429,
+                {
+                    "ok": False,
+                    "error": "尝试次数过多，请稍后再试。",
+                    "retryAfter": retry_after,
+                },
+                {"Retry-After": str(max(1, retry_after))},
+            )
+            return False
+        if reason == "busy":
+            self.send_json(
+                429,
+                {"ok": False, "error": "面板正在处理其他请求，请稍后重试。"},
+                {"Retry-After": "5"},
+            )
+            return False
+        self.request_authentication()
+        return False
 
     def do_GET(self):
         if not self.valid_host():
@@ -330,7 +447,6 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         if request.path != "/api/health" and not self.authenticated():
-            self.request_authentication()
             return
         try:
             if request.path in {"/", "/index.html"}:
@@ -538,8 +654,9 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError, ValueError, TypeError) as exc:
             self.send_json(400, {"ok": False, "error": str(exc)[:200]})
             return
-        # 立刻按新文件重载，无需重启面板。
+        # 立刻按新文件重载，无需重启面板；同时让旧口令的登录缓存失效。
         self.server.credentials.refresh()
+        self.server.auth.invalidate()
         self.send_json(200, {"ok": True, **result})
 
     def do_POST(self):
@@ -557,7 +674,6 @@ class Handler(BaseHTTPRequestHandler):
             self.handle_internal_panel_credentials()
             return
         if not self.authenticated():
-            self.request_authentication()
             return
         if request.path not in {
             "/api/provider-config",
@@ -660,6 +776,7 @@ def main():
     server.tunnel_target = tunnel_target
     server.credentials_path = Path(args.credentials)
     server.credentials = CredentialVerifier(args.credentials)
+    server.auth = AuthGuard(server.credentials)
     server.internal_token = InternalTokenVerifier(args.internal_token)
     server.metrics = MONITOR.MetricsStore(args.metrics_db)
     server.balances = MONITOR.BalanceService(

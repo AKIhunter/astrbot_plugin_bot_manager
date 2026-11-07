@@ -96,7 +96,55 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:17321/api/health
 - `/bm 余额` 能返回金额（前提是面板侧已有可用凭据）；
 - 正常使用一次 DeepSeek 搜索后，`/bm 搜索 今天` 出现流水。
 
-## 五、卸载
+## 五、安全加固（建议）
+
+面板本身只绑回环，公网打不到；真正的暴露面是 SSH 与 AstrBot 自己的 WebUI。
+
+### fail2ban 护 SSH
+
+服务器上最常见的攻击是 SSH 密码爆破（实测一天数千次）。装 fail2ban 即可压住，
+不影响现有的密钥登录：
+
+```bash
+apt-get install -y fail2ban python3-systemd
+```
+
+`/etc/fail2ban/jail.d/bot-manager.local`：
+
+```ini
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1 <你自己的出口 IP>
+backend = systemd
+bantime = 1h
+findtime = 10m
+maxretry = 5
+banaction = iptables-multiport
+
+[sshd]
+enabled = true
+port = 22
+```
+
+```bash
+systemctl enable --now fail2ban
+fail2ban-client status sshd          # 看当前封禁
+fail2ban-client set sshd unbanip 1.2.3.4   # 误封时手动解封
+```
+
+`ignoreip` 一定要写上自己的常用 IP，否则改密码时连错 5 次会被自己关在门外。
+
+### 不要给面板配按 IP 的 jail
+
+面板经隧道访问时，来源地址永远是 `127.0.0.1`。用 fail2ban 按 IP 封面板，
+封的就是你自己。面板的登录限速已内置在进程里（见 [内部接口](api.md#三登录防护)），不需要额外规则。
+
+### 另外两处建议
+
+- AstrBot WebUI 若不需要公网访问，把它绑回 `127.0.0.1`，从面板里嵌进去看，公网只留 SSH。
+- SSH 只留密钥登录（`PasswordAuthentication no` + `PermitRootLogin prohibit-password`），
+  改前确认公钥可登录并保留一个已连上的会话，改完立刻开新连接验证。
+
+## 六、卸载
 
 ```bash
 sudo systemctl disable --now bot-manager
