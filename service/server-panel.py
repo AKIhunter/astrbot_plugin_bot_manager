@@ -366,6 +366,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def authenticated(self):
         """放行时返回 True；失败时已经把 401/429 写回客户端，调用方直接 return。"""
+        # 匿名请求只回 401 触发浏览器认证框，不进入失败计数，避免刷新页面把面板锁死
+        if not self.headers.get("Authorization"):
+            self.request_authentication()
+            return False
         ok, retry_after, reason = self.server.auth.check(
             self.headers.get("Authorization")
         )
