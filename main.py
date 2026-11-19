@@ -41,7 +41,7 @@ MINIMUM_BALANCE_CHECK_SECONDS = 60
 CATALOG_PATH = NOTIFICATION_STATE_PATH.with_name("command-catalog.json")
 CREDENTIAL_STATE_PATH = NOTIFICATION_STATE_PATH.with_name("credential-sync.json")
 TERMINAL_NOTIFICATION_STATES = {"sent", "unknown"}
-PLUGIN_VERSION = "2.2.1"
+PLUGIN_VERSION = "2.2.6"
 # 凭据下发：只在插件配置变化时推一次，避免把面板里手工改的值盖掉。
 DEFAULT_CREDENTIAL_SYNC_MINUTES = 30
 MINIMUM_CREDENTIAL_SYNC_SECONDS = 300
@@ -243,12 +243,35 @@ def provider_identity(provider, kwargs):
     return provider_id, model[:160]
 
 
+SQLITE_MAX_INTEGER = (1 << 63) - 1
+
+
+def token_count(value):
+    """Reject invalid meter values rather than inventing zero or saturated usage."""
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        return None
+    try:
+        number = Decimal(str(value))
+        if (not number.is_finite() or number < 0 or
+                number > SQLITE_MAX_INTEGER or number != number.to_integral_value()):
+            return None
+        return int(number)
+    except (TypeError, ValueError, OverflowError, InvalidOperation):
+        return None
+
+
 def response_usage(response):
     usage = getattr(response, "usage", None)
+    values = [token_count(getattr(usage, name, None))
+              for name in ("input_other", "input_cached", "output")]
+    if any(value is None for value in values):
+        values = [0, 0, 0]
     return {
-        "token_input_other": max(0, int(getattr(usage, "input_other", 0) or 0)),
-        "token_input_cached": max(0, int(getattr(usage, "input_cached", 0) or 0)),
-        "token_output": max(0, int(getattr(usage, "output", 0) or 0)),
+        "token_input_other": values[0],
+        "token_input_cached": values[1],
+        "token_output": values[2],
     }
 
 
@@ -259,12 +282,6 @@ def request_usage(response):
             value, name, default
         )
 
-    def number(value):
-        try:
-            return max(0, int(value or 0))
-        except (TypeError, ValueError, OverflowError):
-            return 0
-
     usage = field(response, "usage")
     if usage is None:
         return None
@@ -274,17 +291,20 @@ def request_usage(response):
         prompt = field(usage, "input_tokens", field(usage, "total_tokens"))
     if prompt is None:
         return None
-    prompt = number(prompt)
+    prompt = token_count(prompt)
     details = field(usage, "prompt_tokens_details")
     cached = field(details, "cached_tokens")
     if cached is None:
         cached = field(usage, "prompt_cache_hit_tokens", 0)
-    cached = min(prompt, number(cached))
+    cached = token_count(cached)
+    output = token_count(field(usage, "completion_tokens", field(usage, "output_tokens")))
+    if any(value is None for value in (prompt, cached, output)):
+        return None
+    cached = min(prompt, cached)
     return {
         "token_input_other": prompt - cached,
         "token_input_cached": cached,
-        "token_output": number(field(usage, "completion_tokens",
-                                    field(usage, "output_tokens"))),
+        "token_output": output,
     }
 
 
@@ -347,7 +367,7 @@ class MeteredStream:
     "astrbot_plugin_usage_telemetry",
     "Bot Manager",
     "统一模型和搜索计量、余额提醒及完整指令查询",
-    "2.2.1",
+    "2.2.6",
 )
 class UsageTelemetryPlugin(Star):
     def __init__(self, context: Context, config: dict | None = None):
@@ -1412,6 +1432,11 @@ class UsageTelemetryPlugin(Star):
                 for field in ("token_input_other", "token_input_cached", "token_output"):
                     state[field] = sum(item.get(field, 0) for item in requests)
                 state["usage_known"] = all(item["usage_known"] for item in requests)
+                if any(token_count(state[field]) is None for field in
+                       ("token_input_other", "token_input_cached", "token_output")):
+                    # Keep per-request readings; an unrepresentable total is unknown.
+                    state.update(response_usage(None))
+                    state["usage_known"] = False
                 state["attempts"] = len(requests)
             state["ended_at"] = time.time()
             state["latency_ms"] = max(

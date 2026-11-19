@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/AKIhunter/astrbot_plugin_bot_manager/releases"><img src="https://img.shields.io/github/v/release/AKIhunter/astrbot_plugin_bot_manager?style=flat-square&color=3b82f6&label=release" alt="release"></a>
-  <img src="https://img.shields.io/badge/%E6%8F%92%E4%BB%B6-2.2.1-8b5cf6?style=flat-square" alt="plugin">
+  <img src="https://img.shields.io/badge/%E6%8F%92%E4%BB%B6-2.2.6-8b5cf6?style=flat-square" alt="plugin">
   <img src="https://img.shields.io/badge/AstrBot-%E2%89%A5%204.29.0-06b6d4?style=flat-square" alt="astrbot">
   <img src="https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Linux%20%7C%20Windows%20%7C%20macOS-10b981?style=flat-square" alt="platform">
   <img src="https://img.shields.io/badge/%E4%BE%9D%E8%B5%96-%E4%BB%85%E6%A0%87%E5%87%86%E5%BA%93-f59e0b?style=flat-square" alt="deps">
@@ -302,3 +302,15 @@ sudo sh service/install-server.sh service
     本项目为独立实现，不声称任何上游背书；文档示例中的账号、地址、号码均为占位符。
   </sub>
 </div>
+
+## 2.2.6 插件更新日志
+
+![Bot Manager](.github/img/Banner.png)
+
+### 能做什么与使用指令
+
+沿用上方计量、余额提醒与指令查询功能，本版修复 Token 数值写入边界。
+
+### 第一次使用与兼容性
+
+沿用上方安装配置步骤；升级保留原凭据、统计数据库和面板客户端。本轮只升级 AstrBot 插件，面板与客户端版本不变，变化见[更新日志](CHANGELOG.md)。
